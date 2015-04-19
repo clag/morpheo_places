@@ -24,7 +24,7 @@
      </rect>
     </property>
     <property name="currentIndex">
-     <number>0</number>
+     <number>1</number>
     </property>
     <widget class="QWidget" name="dataTab">
      <attribute name="title">
@@ -91,7 +91,7 @@
               <string/>
              </property>
              <property name="text">
-              <string>avignon_projets</string>
+              <string>avignon_ech1</string>
              </property>
             </widget>
            </item>
@@ -152,7 +152,7 @@
               <string/>
              </property>
              <property name="text">
-              <string>brut_arcs</string>
+              <string>arcs_nettoyes</string>
              </property>
             </widget>
            </item>
@@ -194,7 +194,7 @@
              <item>
               <widget class="QLineEdit" name="directoryLineEdit">
                <property name="text">
-                <string>/home/clairel/Codes/+sorties_morpheo</string>
+                <string>/home/clairel/Codes/+sorties_morpheo_places</string>
                </property>
               </widget>
              </item>
@@ -310,7 +310,7 @@
         <rect>
          <x>9</x>
          <y>20</y>
-         <width>220</width>
+         <width>228</width>
          <height>22</height>
         </rect>
        </property>
@@ -318,7 +318,7 @@
         <item>
          <widget class="QCheckBox" name="dropTABLESCheckBox">
           <property name="text">
-           <string>SXYZ, SIF, ANGLES, INFO, VOIES</string>
+           <string>PIF, PANGLES, INFO, PVOIES</string>
           </property>
           <property name="checked">
            <bool>true</bool>

@@ -13,15 +13,12 @@ using namespace std;
 namespace WayMethods {
 
     enum methodID {
-        ANGLE_MIN = 0,
-        ANGLE_SOMME_MIN = 1,
-        ANGLE_RANDOM = 2,
-        ARCS = 3
+        ANGLE_MIN = 0
     };
 
     extern int numMethods;
 
-    extern QString MethodeVoies_name[4];
+    extern QString MethodeVoies_name[1];
 
 }
 
@@ -46,10 +43,7 @@ public:
 private:
 
     //---constitution des paires pour un sommet, selon la méthode
-    bool findCouplesAngleMin(int ids);
-    bool findCouplesAngleSommeMin(int ids, int N_couples, int pos_couple, int lsom, int pos_ut, QVector< QVector<bool> >* V_utArcs, QVector< QVector<double> >* V_sommeArc, int nb_possib);
-    bool findCouplesRandom(int ids);
-    bool findCouplesArcs(int ids);
+    bool findCouplesAngleMin(int idp);
 
     //---construction des couples
     bool buildCouples();
@@ -58,11 +52,10 @@ private:
     bool buildVectors();
 
     //---construction de la table VOIES
-    bool build_VOIES();
+    bool build_PVOIES();
 
     //---calcul des attributs de voies
     bool calcStructuralite();
-    bool calcStructRel();
     bool calcInclusion();
     bool calcLocalAccess();
     bool calcGradient();
@@ -79,7 +72,7 @@ private:
     bool insertINFO();
 
     //---complétion de la table SIF
-    bool updateSIF();
+    bool updatePIF();
 
     QString m_rawTableName;
     QString m_directory;
@@ -89,19 +82,19 @@ private:
     //nombre de célibataires
     int m_nbCelibataire;
 
-    // identifiant d'arc (IDA) / arcs couplés avec (IDA' ou 0 pour les impasses) et à quel sommet
-    // IDA >> IDS1 | IDA1 | IDS2 | IDA2 | IDV
+    // identifiant d'arc (IDA) / arcs couplés avec (IDA' ou 0 pour les impasses) et à quelle place
+    // IDA >> IDP1 | IDA1 | IDP2 | IDA2 | IDV
     QVector< QVector<long> > m_Couples;
 
     QVector< int > m_Impasses;
 
-    // identifiants des voies par identifiant de sommet
-    // ligne IDS >> IDV1, IDV2...
-    QVector< QVector<long> > m_SomVoies;
+    // identifiants des voies par identifiant de places
+    // ligne IDP >> IDV1, IDV2...
+    QVector< QVector<long> > m_PlaceVoies;
 
     // identifiants des sommets par identifiant de voie
-    // ligne IDV >> IDS1, IDS2.. IDS
-    QVector< QVector<long> > m_VoieSommets;
+    // ligne IDV >> IDP1, IDP2.. IDP
+    QVector< QVector<long> > m_VoiePlaces;
 
     //nombre de voies
     int m_nbVoies;

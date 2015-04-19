@@ -90,62 +90,61 @@ void MainWindow::calculate() {
  //   for(seuil_angle = 148.; seuil_angle<=180; seuil_angle+=2){
 
     if (ui->dropTABLESCheckBox->isChecked()){
-        pDatabase->dropTable("SXYZ");
-        pDatabase->dropTable("SIF");
-        pDatabase->dropTable("ANGLES");
+        pDatabase->dropTable("PIF");
+        pDatabase->dropTable("PANGLES");
         pDatabase->dropTable("INFO");
-        pDatabase->dropTable("VOIES");
-        pLogger->INFO("table VOIES has been droped");
+        pDatabase->dropTable("PVOIES");
+        pLogger->INFO("table PVOIES has been droped");
     }
 
-        //------------------------------- Création du graphe
-        Graphe *graphe_courant = new Graphe(pDatabase, pLogger, ui->BufferDoubleSpinBox->value());
+    //------------------------------- Création du graphe
+    Graphe *graphe_courant = new Graphe(pDatabase, pLogger, ui->BufferDoubleSpinBox->value());
 
-        ui->statusBar->showMessage("Graph in progress");
-        QApplication::processEvents();
-        if (! graphe_courant->do_Graphe(ui->arcstablenameLineEdit->text())) {
-            mettreEnErreur("Cannot calculate graph");
-            return;
-        }
+    ui->statusBar->showMessage("Graph in progress");
+    QApplication::processEvents();
+    if (! graphe_courant->do_Graphe(ui->arcstablenameLineEdit->text())) {
+        mettreEnErreur("Cannot calculate graph");
+        return;
+    }
 
-        //------------------------------- Calculs sur les voies
-        Voies *voies_courantes = new Voies(pDatabase, pLogger, graphe_courant, methode, seuil_angle, ui->arcstablenameLineEdit->text(), ui->directoryLineEdit->text());
-        pLogger->INFO("voies creees");
-
-
-        ui->statusBar->showMessage("Ways in progress");
-        QApplication::processEvents();
-        if (! voies_courantes->do_Voies()) {
-            mettreEnErreur("Cannot calculate ways");
-            return;
-        }
-
-        ui->statusBar->showMessage("Ways' attributes in progress");
-        QApplication::processEvents();
-        if (! voies_courantes->do_Att_Voie(ui->connexionCheckBox->isChecked(), ui->useCheckBox->isChecked(), ui->inclusionCheckBox->isChecked(), ui->gradientCheckBox->isChecked(), ui->localAccesscheckBox->isChecked())) {
-            mettreEnErreur("Cannot calculate ways' attributes");
-            return;
-        }
-
-        ui->statusBar->showMessage("Edges' attributes in progress");
-        QApplication::processEvents();
-        if (! voies_courantes->do_Att_Arc()) {
-            mettreEnErreur("Cannot calculate edges' attributes");
-            return;
-        }
+    //------------------------------- Calculs sur les voies
+    Voies *voies_courantes = new Voies(pDatabase, pLogger, graphe_courant, methode, seuil_angle, ui->arcstablenameLineEdit->text(), ui->directoryLineEdit->text());
+    pLogger->INFO("voies creees");
 
 
-        //------------------------------- Calculs sur les arcs
-        Arcs *arcs_courants = new Arcs(pDatabase, pLogger, graphe_courant, voies_courantes, methode, seuil_angle);
-        pLogger->INFO("arcs creees");
+    ui->statusBar->showMessage("Ways in progress");
+    QApplication::processEvents();
+    if (! voies_courantes->do_Voies()) {
+        mettreEnErreur("Cannot calculate ways");
+        return;
+    }
 
-        ui->statusBar->showMessage("Arcs in progress");
-        QApplication::processEvents();
-        if (ui->arcRueCheckBox->isChecked() && ! arcs_courants->do_Arcs()) {
-            mettreEnErreur("Cannot calculate arcs");
-            return;
-        }
+    ui->statusBar->showMessage("Ways' attributes in progress");
+    QApplication::processEvents();
+    if (! voies_courantes->do_Att_Voie(ui->connexionCheckBox->isChecked(), ui->useCheckBox->isChecked(), ui->inclusionCheckBox->isChecked(), ui->gradientCheckBox->isChecked(), ui->localAccesscheckBox->isChecked())) {
+        mettreEnErreur("Cannot calculate ways' attributes");
+        return;
+    }
+/*
+    ui->statusBar->showMessage("Edges' attributes in progress");
+    QApplication::processEvents();
+    if (! voies_courantes->do_Att_Arc()) {
+        mettreEnErreur("Cannot calculate edges' attributes");
+        return;
+    }
 
+
+    //------------------------------- Calculs sur les arcs
+    Arcs *arcs_courants = new Arcs(pDatabase, pLogger, graphe_courant, voies_courantes, methode, seuil_angle);
+    pLogger->INFO("arcs creees");
+
+    ui->statusBar->showMessage("Arcs in progress");
+    QApplication::processEvents();
+    if (ui->arcRueCheckBox->isChecked() && ! arcs_courants->do_Arcs()) {
+        mettreEnErreur("Cannot calculate arcs");
+        return;
+    }
+*/
  //   }//end for seuil
 
     ui->statusBar->showMessage("It's all right");

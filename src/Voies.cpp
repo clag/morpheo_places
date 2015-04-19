@@ -9,13 +9,10 @@ using namespace std;
 
 namespace WayMethods {
 
-    int numMethods = 4;
+    int numMethods = 1;
 
-    QString MethodeVoies_name[4] = {
-        "Choix des couples par angles minimum",
-        "Choix des couples par somme minimale des angles",
-        "Choix des couples aleatoire",
-        "Une voie = un arc"
+    QString MethodeVoies_name[1] = {
+        "Choix des couples par angles minimum"
     };
 }
 
@@ -39,13 +36,13 @@ Voies::Voies(Database* db, Logger* log, Graphe* graphe, WayMethods::methodID met
     // Les vecteurs dont on connait deja la taille sont dimensionnes
     m_Couples.resize(graphe->getNombreArcs() + 1);
     m_ArcVoies.resize(graphe->getNombreArcs() + 1);
-    m_SomVoies.resize(graphe->getNombreSommets() + 1);
+    m_PlaceVoies.resize(graphe->getNombrePlaces() + 1);
 
     // Les vecteurs qui stockerons les voies n'ont pas une taille connue
     // On ajoute a la place d'indice 0 un vecteur vide pour toujours avoir :
     // indice dans le vecteur = identifiant de l'objet en base
     m_VoieArcs.push_back(QVector<long>(0));
-    m_VoieSommets.push_back(QVector<long>(0));
+    m_VoiePlaces.push_back(QVector<long>(0));
 }
 
 //***************************************************************************************************************************************************
@@ -53,17 +50,17 @@ Voies::Voies(Database* db, Logger* log, Graphe* graphe, WayMethods::methodID met
 //
 //***************************************************************************************************************************************************
 
-bool Voies::findCouplesAngleMin(int ids)
+bool Voies::findCouplesAngleMin(int idp)
 {
     QVector<long> stayingArcs;
-    for (int a = 0; a < m_Graphe->getArcsOfSommet(ids)->size(); a++) {
-        stayingArcs.push_back(m_Graphe->getArcsOfSommet(ids)->at(a));
+    for (int a = 0; a < m_Graphe->getArcsOfPlace(idp)->size(); a++) {
+        stayingArcs.push_back(m_Graphe->getArcsOfPlace(idp)->at(a));
     }
 
     QSqlQueryModel modelAngles;
     QSqlQuery queryAngles;
-    queryAngles.prepare("SELECT IDA1, IDA2, ANGLE FROM ANGLES WHERE IDS = :IDS ORDER BY ANGLE ASC;");
-    queryAngles.bindValue(":IDS",ids);
+    queryAngles.prepare("SELECT IDA1, IDA2, ANGLE, DISTANCE, ANGLE*DISTANCE*DISTANCE AS AD FROM PANGLES WHERE IDP = :IDP ORDER BY AD;");
+    queryAngles.bindValue(":IDP",idp);
 
     if (! queryAngles.exec()) {
         pLogger->ERREUR(QString("Recuperation arc dans findCouplesAngleMin : %1").arg(queryAngles.lastError().text()));
@@ -77,17 +74,13 @@ bool Voies::findCouplesAngleMin(int ids)
     for (int ang = 0; ang < modelAngles.rowCount(); ang++) {
 
         if (modelAngles.record(ang).value("ANGLE").toDouble() > m_seuil_angle) {
-            // A partir de maintenant tous les angles seront au dessus du seuil
-            // Tous les arcs qui restent sont celibataires
-            for (int a = 0; a < stayingArcs.size(); a++) {
-                long ida = stayingArcs.at(a);
-                m_Couples[ida].push_back(ids);
-                m_Couples[ida].push_back(0); //on l'ajoute comme arc terminal (en couple avec 0)
-                m_Impasses.push_back(ida); // Ajout comme impasse
-                m_nbCelibataire++;
-            }
-            return true;
+            continue;
         }
+
+        /*
+        if (modelAngles.record(ang).value("DISTANCE").toDouble() > 10) {
+            continue;
+        }*/
 
         int a1 = modelAngles.record(ang).value("IDA1").toInt();
         int a2 = modelAngles.record(ang).value("IDA2").toInt();
@@ -98,275 +91,42 @@ bool Voies::findCouplesAngleMin(int ids)
         if (occ1 == 0 || occ2 == 0) continue; // Un des arcs a deja ete traite
         if (a1 == a2 && occ1 < 2) continue; // arc boucle deja utilise, mais est en double dans le tableau des arcs
 
-        m_Couples[a1].push_back(ids);
+        m_Couples[a1].push_back(idp);
         m_Couples[a1].push_back(a2);
-        m_Couples[a2].push_back(ids);
+        m_Couples[a2].push_back(idp);
         m_Couples[a2].push_back(a1);
 
         m_nbCouples++;
 
         int idx = stayingArcs.indexOf(a1);
         if (idx == -1) {
-            pLogger->ERREUR(QString("Pas normal de ne pas avoir l'arc %1 encore disponible au sommet %2").arg(a1).arg(ids));
+            pLogger->ERREUR(QString("Pas normal de ne pas avoir l'arc %1 encore disponible à la place %2").arg(a1).arg(idp));
             return false;
         }
         stayingArcs.remove(idx);
         idx = stayingArcs.indexOf(a2);
         if (idx == -1) {
-            pLogger->ERREUR(QString("Pas normal de ne pas avoir l'arc %1 encore disponible au sommet %2").arg(a2).arg(ids));
+            pLogger->ERREUR(QString("Pas normal de ne pas avoir l'arc %1 encore disponible à la place %2").arg(a2).arg(idp));
             return false;
         }
         stayingArcs.remove(idx);
     }
 
-    if (stayingArcs.size() > 1) {
-        pLogger->ERREUR(QString("Pas normal d'avoir encore plus d'un arc a cet endroit (sommet %1)").arg(ids));
-        for (int sa = 0; sa < stayingArcs.size(); sa++) {
-            pLogger->ERREUR(QString("   - Arc %1").arg(stayingArcs.at(sa)));
-        }
-
-        return false;
-    }
-
     if (! stayingArcs.isEmpty()) {
-        pLogger->DEBUG("Un celibataire !!");
-        // On a un nombre impair d'arcs, donc un arc celibataire
-        long ida = stayingArcs.at(0);
-        m_Couples[ida].push_back(ids);
-        m_Couples[ida].push_back(0); //on l'ajoute comme arc terminal (en couple avec 0)
-        m_Impasses.push_back(ida); // Ajout comme impasse
-        m_nbCelibataire++;
+        pLogger->DEBUG("Des celibataires !!");
+        for (int sa = 0; sa < stayingArcs.size(); sa++) {
+            long ida = stayingArcs.at(sa);
+            m_Couples[ida].push_back(idp);
+            m_Couples[ida].push_back(0); //on l'ajoute comme arc terminal (en couple avec 0)
+            m_Impasses.push_back(ida); // Ajout comme impasse
+            m_nbCelibataire++;
+        }
     }
 
     return true;
 }
 
 
-bool Voies::findCouplesAngleSommeMin(int ids, int N_couples, int pos_couple, int lsom, int pos_ut, QVector< QVector<bool> >* V_utArcs, QVector< QVector<double> >* V_sommeArc, int nb_possib){
-
-    QVector<long>* arcs = m_Graphe->getArcsOfSommet(ids);
-    int N_arcs = arcs->size();
-
-    if(pos_couple>N_couples){//ON A FINI LE REMPLISSAGE
-
-        //cout<<"DERNIER ARC"<<endl;
-
-        if(N_arcs%2 == 1){//CAS NB IMPAIR D'ARCS
-
-            for(int r=0; r<N_arcs; r++){
-
-                if (V_utArcs->at(r).at(pos_ut) == false && V_sommeArc->at(lsom).last() == -1){//CAS ARC NON UTILISE
-
-                    (*V_sommeArc)[lsom].last() = arcs->at(r);
-
-                    break;
-
-                }//end if ARC NON UTILISE
-
-            }//end for r
-
-
-        }//end if IMPAIR
-
-        //TEST
-        if(V_sommeArc->at(lsom).last() == -1){
-            pLogger->ERREUR(QString("nombre d'arcs insuffisant pour la somme : %1 sur la ligne %2").arg(V_sommeArc->at(lsom)[0]).arg(lsom));
-            return false;
-        }//end if nbArcs_utilises != N_arcs
-
-        else if(lsom == nb_possib-1){//TOUT A ETE REMPLI
-            return true;
-
-        }//end else if
-
-        //TOUT EST OK, ON PASSE A LA LIGNE SUIVANTE
-
-    }
-    else{
-
-        //ARC I ----------------------------------------------------------------------
-        for(int i=0; i<N_arcs; i++){
-
-            if(! V_utArcs->at(i)[pos_ut]){
-
-                int arc_i = arcs->at(i);
-
-                //ARC J --------------------------------------------------------------
-                for(int j=i+1; j<N_arcs; j++){
-
-                    if(! V_utArcs->at(j)[pos_ut]) {
-
-                        int arc_j = arcs->at(j);
-
-                        //STOCKAGE ---------------------------------------------------
-
-                        if(V_sommeArc->at(lsom)[2*pos_couple-1] == -1 && V_sommeArc->at(lsom)[2*pos_couple] == -1){//betonnage
-                            double angle = m_Graphe->getAngle(ids, arc_i, arc_j);
-                            if (angle < 0) return false;
-                            (*V_sommeArc)[lsom][0] += angle;
-                            (*V_sommeArc)[lsom][2*pos_couple-1] = arc_i;
-                            (*V_sommeArc)[lsom][2*pos_couple] = arc_j;
-
-                            //MEMOIRE DES COUPLES DEJA UTILISES --------------------------
-                            for(int r=pos_ut+1; r<N_couples+1; r++){
-                                (*V_utArcs)[i][r] = true;
-                                (*V_utArcs)[j][r] = true;
-                            }//end for reste
-
-                        }//end if betonnage
-
-
-                        //COMPLETION DES COLONNES PRECEDENTES DE LA LIGNE
-                        for(int p=1; p<(2*pos_couple-1); p+=2){
-                            if(V_sommeArc->at(lsom)[p] == -1){//NON REMPLI
-
-                                int arc_p=V_sommeArc->at(lsom-1)[p];
-                                int arc_p1=V_sommeArc->at(lsom-1)[p+1];
-
-                                double angle = m_Graphe->getAngle(ids, arc_p, arc_p1);
-                                if (angle < 0) return false;
-                                (*V_sommeArc)[lsom][0] += angle;
-
-                                (*V_sommeArc)[lsom][p] = V_sommeArc->at(lsom-1)[p];
-                                (*V_sommeArc)[lsom][p+1] = V_sommeArc->at(lsom-1)[p+1];
-
-                                //MEMOIRE DES COUPLES DEJA UTILISES --------------------------
-                                for(int c=0; c<N_arcs; c++){
-                                    if(arcs->at(c) == V_sommeArc->at(lsom)[p] || arcs->at(c) == V_sommeArc->at(lsom)[p+1]){
-                                        for(int r=pos_ut+1; r<N_couples+1; r++){
-                                            (*V_utArcs)[c][r] = true;
-                                        }//end for reste
-                                    }//end if
-                                }//end for c
-
-
-                            }//end if
-                        }//end for completion
-
-
-                        //NOUVELLE RECHERCHE
-                        findCouplesAngleSommeMin(ids, N_couples, pos_couple+1, lsom, pos_ut+1, V_utArcs, V_sommeArc, nb_possib);
-
-                        //MISE A JOUR DE LSOM
-                        for(int t=0; t<V_sommeArc->size(); t++){
-                            if(V_sommeArc->at(t).back() == -1){
-                                //cout<<"lsom reevaluee : "<<t<<endl;
-                                lsom = t;
-                                break;
-                            }//end if
-                        }//end for t
-
-                        //MISE A JOUR DE V_UTARCS
-                        //REMISE A 0 POUR LES NIVEAUX SUPERIEURS
-                        for(int t = 0; t < V_sommeArc->size()-1; t++){
-                            if(V_sommeArc->at(t).back() != -1 && V_sommeArc->at(t+1)[0] == 0){//on commence une nouvelle ligne
-                                for(int i=0; i<N_arcs; i++){
-                                    for(int j=pos_ut+1; j<N_couples+1; j++){
-                                        (*V_utArcs)[i][j] = false;
-                                    }//end for j
-                                }//end for i
-                                //cout<<"i et j remis a 0"<<endl;
-                                break;
-                            }//end if
-                        }//end for t
-
-
-                    }//end if (!arcs_utilises.at(j))
-
-                }//end for j
-
-             }//end if (!arcs_utilises.at(i))
-
-        }//end for i
-
-    }//end else (pos_couple>N_couples)
-
-    //cout<<"-- FIN -- "<<pos_ut<<endl;
-
-    return true;
-
-}//END
-
-// On ne fait pas vraiment un rando, on prend juste les arcs dans l'ordre, sans verifier les angles.
-bool Voies::findCouplesRandom(int ids)
-{
-    QVector<long>* arcs = m_Graphe->getArcsOfSommet(ids);
-    int a = 0;
-    while (a+1 < arcs->size()) {
-        long a1 = arcs->at(a);
-        long a2 = arcs->at(a+1);
-
-        double angle = m_Graphe->getAngle(ids, a1, a2);
-        if (angle < 0) {
-            pLogger->ERREUR(QString("Impossible de trouver l'angle entre les arcs %1 et %2").arg(a1).arg(a2));
-            return false;
-        }
-
-        if (angle < m_seuil_angle) {
-            m_Couples[a1].push_back(ids);
-            m_Couples[a1].push_back(a2);
-            m_Couples[a2].push_back(ids);
-            m_Couples[a2].push_back(a1);
-            m_nbCouples++;
-        } else {
-            // On fait des 2 arcs 2 impasses
-            m_Couples[a1].push_back(ids);
-            m_Couples[a1].push_back(0); //on l'ajoute comme arc terminal (en couple avec 0)
-            m_Impasses.push_back(a1); // Ajout comme impasse
-            m_nbCelibataire++;
-
-            m_Couples[a2].push_back(ids);
-            m_Couples[a2].push_back(0); //on l'ajoute comme arc terminal (en couple avec 0)
-            m_Impasses.push_back(a2); // Ajout comme impasse
-            m_nbCelibataire++;
-        }
-        a += 2;
-    }
-
-    if (a < arcs->size() ) {
-        // On a un nombre impair d'arcs, donc un arc celibataire
-        long ida = arcs->at(a);
-        m_Couples[ida].push_back(ids);
-        m_Couples[ida].push_back(0); //on l'ajoute comme arc terminal (en couple avec 0)
-        m_Impasses.push_back(ida); // Ajout comme impasse
-        m_nbCelibataire++;
-    }
-
-    return true;
-}
-
-// On ne fait un couple que si le sommet est de degres 2
-bool Voies::findCouplesArcs(int ids)
-{
-    QVector<long>* arcs = m_Graphe->getArcsOfSommet(ids);
-
-    if (arcs->size() == 2){
-
-        long a1 = arcs->at(0);
-        long a2 = arcs->at(1);
-
-        m_Couples[a1].push_back(ids);
-        m_Couples[a1].push_back(a2);
-        m_Couples[a2].push_back(ids);
-        m_Couples[a2].push_back(a1);
-        m_nbCouples++;
-
-    }
-    else{
-
-        for (int i=0; i<arcs->size(); i++){
-             long a = arcs->at(i);
-
-             m_Couples[a].push_back(ids);
-             m_Couples[a].push_back(0); //on l'ajoute comme arc terminal (en couple avec 0)
-             m_Impasses.push_back(a); // Ajout comme impasse
-             m_nbCelibataire++;
-        }
-
-    }
-
-    return true;
-}// end findArcs
 
 
 
@@ -382,27 +142,25 @@ bool Voies::buildCouples(){
     }
     QTextStream degreestream( &degreeqfile );
 
-    for(int ids = 1; ids <= m_Graphe->getNombreSommets(); ids++){
-        pLogger->DEBUG(QString("Le sommet IDS %1").arg(ids));
+    for(int idp = 1; idp <= m_Graphe->getNombrePlaces(); idp++){
+        pLogger->DEBUG(QString("La place IDP %1").arg(idp));
 
-        QVector<long>* arcsOfSommet = m_Graphe->getArcsOfSommet(ids);
+        QVector<long>* arcsOfPlace = m_Graphe->getArcsOfPlace(idp);
 
         //nombre d'arcs candidats
-        int N_arcs = arcsOfSommet->size();
+        int N_arcs = arcsOfPlace->size();
 
-        pLogger->DEBUG(QString("Le sommet IDS %1 se trouve sur %2 arc(s)").arg(ids).arg(N_arcs));
+        pLogger->DEBUG(QString("La place IDP %1 se trouve sur %2 arc(s)").arg(idp).arg(N_arcs));
         for(int a = 0; a < N_arcs; a++){
-            pLogger->DEBUG(QString("     ID arcs : %1").arg(arcsOfSommet->at(a)));
+            pLogger->DEBUG(QString("     ID arcs : %1").arg(arcsOfPlace->at(a)));
         }//endfora
 
         //ECRITURE DU DEGRES DES SOMMETS
         //writing
-        degreestream << ids;
+        degreestream << idp;
         degreestream << " ";
         degreestream << N_arcs;
         degreestream << endl;
-
-
 
         //INITIALISATION
 
@@ -412,8 +170,8 @@ bool Voies::buildCouples(){
 
             //si 1 seul arc passe par le sommet
             if(N_arcs == 1){
-                long ida = arcsOfSommet->at(0);
-                m_Couples[ida].push_back(ids);
+                long ida = arcsOfPlace->at(0);
+                m_Couples[ida].push_back(idp);
                 m_Couples[ida].push_back(0); //on l'ajoute comme arc terminal (en couple avec 0)
                 m_Impasses.push_back(ida); // Ajout comme impasse
                 m_nbCelibataire++;
@@ -423,141 +181,22 @@ bool Voies::buildCouples(){
 
             //si 2 arcs passent par le sommet : ils sont ensemble !
             if(N_arcs == 2){
-                long a1 = arcsOfSommet->at(0);
-                long a2 = arcsOfSommet->at(1);
+                long a1 = arcsOfPlace->at(0);
+                long a2 = arcsOfPlace->at(1);
 
-                m_Couples[a1].push_back(ids);
+                m_Couples[a1].push_back(idp);
                 m_Couples[a1].push_back(a2);
-                m_Couples[a2].push_back(ids);
+                m_Couples[a2].push_back(idp);
                 m_Couples[a2].push_back(a1);
                 m_nbCouples++;
 
                 continue;
             }//endif 1
 
-            switch(m_methode) {
-
-                case WayMethods::ANGLE_MIN:
-                    if (! findCouplesAngleMin(ids)) return false;
-                    break;
-
-                case WayMethods::ANGLE_SOMME_MIN:
-                    {
-                    //nombre de possibilites
-                    int N_couples = N_arcs / 2;
-                    float nb_possib=1;
-                    int N = N_arcs;
-                    while(N>2){
-                        nb_possib = nb_possib * ((N*(N-1))/2);
-                        N -= 2;
-                    }//end while
-
-                    //VECTEUR INDIQUANT SI L'ARC A DEJA ETE UTILISE OU PAS
-                    QVector< QVector<bool> >* V_utArcs = new QVector<  QVector<bool> >(N_arcs);
-
-                    for(int i=0; i<N_arcs; i++){
-                        (*V_utArcs)[i].resize(N_couples+1);
-                        for(int j=0; j<(*V_utArcs)[i].size(); j++){
-                            (*V_utArcs)[i][j]=false;
-                        }//end for j
-                    }//end for i
-
-                    //position dans ce vecteur (colonne)
-                    int pos_ut = 0;
-
-                    int pos_couple = 1;
-                    int lsom = 0;
-
-                    //VECTEUR DE SOMMES ET D'ARCS
-                    QVector< QVector<double> >* V_sommeArc = new QVector<  QVector<double> >(nb_possib);
-                    for(int i=0; i<V_sommeArc->size(); i++){
-                        (*V_sommeArc)[i].resize(N_arcs+1);
-                        (*V_sommeArc)[i][0]=0;
-                        for(int j=1; j<V_sommeArc->at(i).size(); j++){
-                            (*V_sommeArc)[i][j] = -1;
-                        }//end for j
-                    }//end for i
-
-
-                    //RECHERCHE DES PAIRES
-                    if (! findCouplesAngleSommeMin(ids, N_couples, pos_couple, lsom, pos_ut, V_utArcs, V_sommeArc, nb_possib)) {
-                        return false;
-                    }
-
-                    //RESULTAT POUR LE SOMMET S (IDS = S+1)
-
-                    double somme_min = N_couples*m_seuil_angle;
-                    int lsom_min = 0;
-
-                    //pour chaque somme calculee
-                    for(int lsom = 0; lsom < V_sommeArc->size(); lsom++){
-
-                        // SOMME = V_sommeArc[lsom][0]
-
-                        if(V_sommeArc->at(lsom)[0] < somme_min){
-
-                            lsom_min = lsom;
-                            somme_min = V_sommeArc->at(lsom)[0];
-
-                        }//endif nouvelle somme min
-
-                    }//end for lsom
-
-                    if(somme_min < N_couples*m_seuil_angle){
-
-                        for(int i=1; i < V_sommeArc->at(lsom_min).size()-1; i+=2){
-                            int a1 = V_sommeArc->at(lsom_min).at(i);
-                            int a2 = V_sommeArc->at(lsom_min).at(i+1);
-
-                            m_Couples[a1].push_back(ids);
-                            m_Couples[a1].push_back(a2);
-                            m_Couples[a2].push_back(ids);
-                            m_Couples[a2].push_back(a1);
-
-                            m_nbCouples++;
-
-                        }//end for a
-
-                        if (N_arcs%2 == 1) {
-                            int a = V_sommeArc->at(lsom_min).last();
-                            m_Couples[a].push_back(ids);
-                            m_Couples[a].push_back(0);
-                            m_Impasses.push_back(a);
-                            m_nbCelibataire++;
-                        }
-
-                    } else {
-                        QVector<long>* arcs = m_Graphe->getArcsOfSommet(ids);
-
-                        for(int i=0; i<N_arcs; i++){
-
-                            int a = arcs->at(i);
-                            m_Couples[a].push_back(ids);
-                            m_Couples[a].push_back(0);
-                            m_Impasses.push_back(a);
-                            m_nbCelibataire++;
-                        }//end for i
-
-                    }
-
-                    break;
-                    }
-
-                case WayMethods::ANGLE_RANDOM:
-                    if (! findCouplesRandom(ids)) return false;
-                    break;
-
-                case WayMethods::ARCS:
-                    if (! findCouplesArcs(ids)) return false;
-                    break;
-
-                default:
-                    pLogger->ERREUR("Methode d'appariement des arcs inconnu");
-                    return false;
-            }
+            if (! findCouplesAngleMin(idp)) return false;
 
         } else{
-            pLogger->ERREUR(QString("Le sommet %1 n'a pas d'arcs, donc pas de couple").arg(ids));
+            pLogger->ERREUR(QString("La place %1 n'a pas d'arcs, donc pas de couple").arg(idp));
             return false;
         }//end else
 
@@ -624,7 +263,7 @@ bool Voies::buildVectors(){
         }
 
         voieS.push_back(ids_courant);
-        m_SomVoies[ids_courant].push_back(idv);
+        m_PlaceVoies[ids_courant].push_back(idv);
 
         while (ida_courant) {
 
@@ -651,12 +290,12 @@ bool Voies::buildVectors(){
             }
 
             voieS.push_back(ids_courant);
-            m_SomVoies[ids_courant].push_back(idv);
+            m_PlaceVoies[ids_courant].push_back(idv);
 
         }
 
         m_VoieArcs.push_back(voieA);
-        m_VoieSommets.push_back(voieS);
+        m_VoiePlaces.push_back(voieS);
         m_nbVoies++;
     }
 
@@ -677,7 +316,7 @@ bool Voies::buildVectors(){
         int ids_courant = m_Couples.at(ida_courant).at(0);
 
         voieS.push_back(ids_courant);
-        m_SomVoies[ids_courant].push_back(idv);
+        m_PlaceVoies[ids_courant].push_back(idv);
 
         while (ida_courant) {
 
@@ -705,12 +344,12 @@ bool Voies::buildVectors(){
 
             voieS.push_back(ids_courant);
 
-            m_SomVoies[ids_courant].push_back(idv);
+            m_PlaceVoies[ids_courant].push_back(idv);
 
         }
 
         m_VoieArcs.push_back(voieA);
-        m_VoieSommets.push_back(voieS);
+        m_VoiePlaces.push_back(voieS);
         m_nbVoies++;
     }
 
@@ -721,14 +360,14 @@ bool Voies::buildVectors(){
     for(int idv1 = 1; idv1 < m_nbVoies + 1; idv1++) {
 
         //on parcours les sommets sur la voie
-        for(int s = 0; s < m_VoieSommets[idv1].size(); s++){
+        for(int s = 0; s < m_VoiePlaces[idv1].size(); s++){
 
-            long ids = m_VoieSommets[idv1][s];
+            long ids = m_VoiePlaces[idv1][s];
 
             //on cherche les voies passant par ces sommets
-            for(int v = 0; v < m_SomVoies[ids].size(); v++){
+            for(int v = 0; v < m_PlaceVoies[ids].size(); v++){
 
-                long idv2 = m_SomVoies[ids][v];
+                long idv2 = m_PlaceVoies[ids][v];
                 if(idv2 != idv1){
                     m_VoieVoies[idv1].push_back(idv2);
                 }
@@ -754,19 +393,19 @@ bool Voies::buildVectors(){
 
 
 //***************************************************************************************************************************************************
-//CONSTRUCTION DE LA TABLE VOIES EN BDD
+//CONSTRUCTION DE LA TABLE PVOIES EN BDD
 //
 //***************************************************************************************************************************************************
 
-bool Voies::build_VOIES(){
+bool Voies::build_PVOIES(){
 
     bool voiesToDo = true;
 
-    if (! pDatabase->tableExists("VOIES")) {
+    if (! pDatabase->tableExists("PVOIES")) {
         voiesToDo = true;
-        pLogger->INFO("La table des VOIES n'est pas en base, on la construit !");
+        pLogger->INFO("La table des PVOIES n'est pas en base, on la construit !");
     } else {
-        // Test si la table VOIES a deja ete construite avec les memes parametres methode + seuil
+        // Test si la table PVOIES a deja ete construite avec les memes parametres methode + seuil
         QSqlQueryModel estMethodeActive;
         estMethodeActive.setQuery(QString("SELECT * FROM INFO WHERE methode = %1 AND seuil_angle = %2 AND ACTIVE=TRUE").arg((int) m_methode).arg((int) m_seuil_angle));
         if (estMethodeActive.lastError().isValid()) {
@@ -775,34 +414,34 @@ bool Voies::build_VOIES(){
         }
 
         if (estMethodeActive.rowCount() > 0) {
-            pLogger->INFO("La table des VOIES est deja faite avec cette methode et ce seuil des angles");
+            pLogger->INFO("La table des PVOIES est deja faite avec cette methode et ce seuil des angles");
             voiesToDo = false;
         } else {
-            pLogger->INFO("La table des VOIES est deja faite mais pas avec cette methode ou ce seuil des angles : on la refait");
+            pLogger->INFO("La table des PVOIES est deja faite mais pas avec cette methode ou ce seuil des angles : on la refait");
             // Les voies existent mais n'ont pas ete faites avec la meme methode
             voiesToDo = true;
 
-            if (! pDatabase->dropTable("VOIES")) {
-                pLogger->ERREUR("Impossible de supprimer VOIES, pour la recreer avec la bonne methode");
+            if (! pDatabase->dropTable("PVOIES")) {
+                pLogger->ERREUR("Impossible de supprimer PVOIES, pour la recreer avec la bonne methode");
                 return false;
             }
 
-            if (! pDatabase->dropTable("DTOPO_VOIES")) {
-                pLogger->ERREUR("Impossible de supprimer DTOPO_VOIES, pour la recreer avec la bonne methode");
+            if (! pDatabase->dropTable("DTOPO_PVOIES")) {
+                pLogger->ERREUR("Impossible de supprimer DTOPO_PVOIES, pour la recreer avec la bonne methode");
                 return false;
             }
         }
     }
 
-    //SUPPRESSION DE LA TABLE VOIES SI DEJA EXISTANTE
+    //SUPPRESSION DE LA TABLE PVOIES SI DEJA EXISTANTE
     if (voiesToDo) {
 
-        pLogger->INFO("-------------------------- build_VOIES START ------------------------");
+        pLogger->INFO("-------------------------- build_PVOIES START ------------------------");
 
-        // MISE A JOUR DE USED DANS ANGLES
+        // MISE A JOUR DE USED DANS PANGLES
 
         QSqlQuery queryAngle;
-        queryAngle.prepare("UPDATE ANGLES SET USED=FALSE;");
+        queryAngle.prepare("UPDATE PANGLES SET USED=FALSE;");
 
         if (! queryAngle.exec()) {
             pLogger->ERREUR(QString("Mise à jour de l'angle (USED=FALSE) : %1").arg(queryAngle.lastError().text()));
@@ -825,13 +464,13 @@ bool Voies::build_VOIES(){
             }
         }
 
-        //CREATION DE LA TABLE VOIES D'ACCUEIL DEFINITIVE
+        //CREATION DE LA TABLE PVOIES D'ACCUEIL DEFINITIVE
 
-        QSqlQueryModel createVOIES;
-        createVOIES.setQuery("CREATE TABLE VOIES ( IDV SERIAL NOT NULL PRIMARY KEY, MULTIGEOM geometry, LENGTH float, NBA integer, NBS integer, NBC integer, NBC_P integer);");
+        QSqlQueryModel createPVOIES;
+        createPVOIES.setQuery("CREATE TABLE PVOIES ( IDV SERIAL NOT NULL PRIMARY KEY, MULTIGEOM geometry, LENGTH float, NBA integer, NBP integer, NBC integer, NBC_P integer);");
 
-        if (createVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("createtable_voies : %1").arg(createVOIES.lastError().text()));
+        if (createPVOIES.lastError().isValid()) {
+            pLogger->ERREUR(QString("createtable_voies : %1").arg(createPVOIES.lastError().text()));
             return false;
         }//end if : test requete QSqlQueryModel
 
@@ -839,7 +478,7 @@ bool Voies::build_VOIES(){
 
         QSqlQueryModel *geometryArcs = new QSqlQueryModel();
 
-        geometryArcs->setQuery("SELECT IDA AS IDA, GEOM AS GEOM FROM SIF;");
+        geometryArcs->setQuery("SELECT IDA AS IDA, GEOM AS GEOM FROM PIF;");
 
         if (geometryArcs->lastError().isValid()) {
             pLogger->ERREUR(QString("req_arcsvoies : %1").arg(geometryArcs->lastError().text()));
@@ -882,7 +521,7 @@ bool Voies::build_VOIES(){
         for (int idv = 1; idv <= m_nbVoies; idv++) {
 
             int nba = m_VoieArcs.at(idv).size();
-            int nbs = m_VoieSommets.at(idv).size();
+            int nbp = m_VoiePlaces.at(idv).size();
 
             // CALCUL DU NOMBRE DE CONNEXION DE LA VOIE
             int nbc = 0;
@@ -890,12 +529,12 @@ bool Voies::build_VOIES(){
 
             // Pour chaque sommet appartenant a la voie, on regarde combien d'arcs lui sont connectes
             // On enleve les 2 arcs correspondant a la voie sur laquelle on se trouve
-            for(int s = 0;  s < m_VoieSommets[idv].size(); s++){
-                nbc += m_Graphe->getArcsOfSommet(m_VoieSommets[idv][s])->size()-2;
+            for(int s = 0;  s < m_VoiePlaces[idv].size(); s++){
+                nbc += m_Graphe->getArcsOfPlace(m_VoiePlaces[idv][s])->size()-2;
             }//end for
 
             // Dans le cas d'une non boucle, on a enleve a tord 2 arcs pour les fins de voies
-            if ( nba + 1 == nbs ) { nbc += 2; nbc_p = nbc - 2; }
+            if ( nba + 1 == nbp ) { nbc += 2; nbc_p = nbc - 2; }
             else { nbc_p = nbc;}
 
 
@@ -906,14 +545,14 @@ bool Voies::build_VOIES(){
 
 
 
-            QString addVoie = QString("INSERT INTO VOIES(IDV, MULTIGEOM, NBA, NBS, NBC, NBC_P) VALUES (%1, ST_LineMerge(ST_Union(ARRAY[%2])) , %3, %4, %5, %6);")
-                    .arg(idv).arg(geometryVoies.at(idv)).arg(nba).arg(nbs).arg(nbc).arg(nbc_p);
+            QString addPVoie = QString("INSERT INTO PVOIES(IDV, MULTIGEOM, NBA, NBP, NBC, NBC_P) VALUES (%1, ST_LineMerge(ST_Union(ARRAY[%2])) , %3, %4, %5, %6);")
+                    .arg(idv).arg(geometryVoies.at(idv)).arg(nba).arg(nbp).arg(nbc).arg(nbc_p);
 
-            QSqlQuery addInVOIES;
-            addInVOIES.prepare(addVoie);
+            QSqlQuery addInPVOIES;
+            addInPVOIES.prepare(addPVoie);
 
-            if (! addInVOIES.exec()) {
-                pLogger->ERREUR(QString("Impossible d'ajouter la voie %1 dans la table VOIES : %2").arg(idv).arg(addInVOIES.lastError().text()));
+            if (! addInPVOIES.exec()) {
+                pLogger->ERREUR(QString("Impossible d'ajouter la voie %1 dans la table PVOIES : %2").arg(idv).arg(addInPVOIES.lastError().text()));
                 return false;
             }
 
@@ -921,43 +560,43 @@ bool Voies::build_VOIES(){
 
         geomqfile.close();
 
-        //On ajoute la voie correspondante à l'arc dans SIF
+        //On ajoute la voie correspondante à l'arc dans PIF
 
         for (int ida=1; ida < m_Couples.size(); ida++){
             int idv = m_Couples.at(ida).at(4);
 
-            QSqlQuery addIDVAttInSIF;
-            addIDVAttInSIF.prepare("UPDATE SIF SET IDV = :IDV WHERE ida = :IDA ;");
-            addIDVAttInSIF.bindValue(":IDV",idv);
-            addIDVAttInSIF.bindValue(":IDA",ida);
+            QSqlQuery addIDVAttInPIF;
+            addIDVAttInPIF.prepare("UPDATE PIF SET IDV = :IDV WHERE ida = :IDA ;");
+            addIDVAttInPIF.bindValue(":IDV",idv);
+            addIDVAttInPIF.bindValue(":IDA",ida);
 
-            if (! addIDVAttInSIF.exec()) {
+            if (! addIDVAttInPIF.exec()) {
                 pLogger->ERREUR(QString("Impossible d'inserer l'identifiant %1 pour l'arc %2").arg(idv).arg(ida));
-                pLogger->ERREUR(addIDVAttInSIF.lastError().text());
+                pLogger->ERREUR(addIDVAttInPIF.lastError().text());
                 return false;
             }
 
         }
 
         // On calcule la longueur des voies
-        QSqlQuery updateLengthInVOIES;
-        updateLengthInVOIES.prepare("UPDATE VOIES SET LENGTH = ST_Length(MULTIGEOM);");
+        QSqlQuery updateLengthInPVOIES;
+        updateLengthInPVOIES.prepare("UPDATE PVOIES SET LENGTH = ST_Length(MULTIGEOM);");
 
-        if (! updateLengthInVOIES.exec()) {
-            pLogger->ERREUR(QString("Impossible de calculer la longueur de la voie dans la table VOIES : %1").arg(updateLengthInVOIES.lastError().text()));
+        if (! updateLengthInPVOIES.exec()) {
+            pLogger->ERREUR(QString("Impossible de calculer la longueur de la voie dans la table PVOIES : %1").arg(updateLengthInPVOIES.lastError().text()));
             return false;
         }
 
         // On calcule la connectivite sur la longueur
-        if (! pDatabase->add_att_div("VOIES","LOC","LENGTH","NBC")) return false;
+        if (! pDatabase->add_att_div("PVOIES","LOC","LENGTH","NBC")) return false;
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_NBC", "NBC", 10, true)) return false;
-        if (! pDatabase->add_att_cl("VOIES", "CL_LOC", "LOC", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_NBC", "NBC", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_LOC", "LOC", 10, true)) return false;
 
 
-        pLogger->INFO("--------------------------- build_VOIES END --------------------------");
+        pLogger->INFO("--------------------------- build_PVOIES END --------------------------");
     } else {
-        pLogger->INFO("------------------------- VOIES already exists -----------------------");
+        pLogger->INFO("------------------------- PVOIES already exists -----------------------");
     }
 
     return true;
@@ -977,48 +616,48 @@ bool Voies::arcInVoie(long ida, long idv){
 
 }//END arcInVoie
 
-bool Voies::updateSIF(){
+bool Voies::updatePIF(){
 
-    //On ajoute la voie correspondante à l'arc dans SIF
+    //On ajoute la voie correspondante à l'arc dans PIF
 
     for (int ida=1; ida < m_Couples.size(); ida++){
         int idv = m_Couples.at(ida).at(4);
 
-        QSqlQuery addIDVAttInSIF;
-        addIDVAttInSIF.prepare("UPDATE SIF SET IDV = :IDV WHERE ida = :IDA ;");
-        addIDVAttInSIF.bindValue(":IDV",idv);
-        addIDVAttInSIF.bindValue(":IDA",ida);
+        QSqlQuery addIDVAttInPIF;
+        addIDVAttInPIF.prepare("UPDATE PIF SET IDV = :IDV WHERE ida = :IDA ;");
+        addIDVAttInPIF.bindValue(":IDV",idv);
+        addIDVAttInPIF.bindValue(":IDA",ida);
 
-        if (! addIDVAttInSIF.exec()) {
+        if (! addIDVAttInPIF.exec()) {
             pLogger->ERREUR(QString("Impossible d'inserer l'identifiant %1 pour l'arc %2").arg(idv).arg(ida));
-            pLogger->ERREUR(addIDVAttInSIF.lastError().text());
+            pLogger->ERREUR(addIDVAttInPIF.lastError().text());
             return false;
         }
 
     }
 
-    QSqlQueryModel *structFromVOIES = new QSqlQueryModel();
+    QSqlQueryModel *structFromPVOIES = new QSqlQueryModel();
 
-    structFromVOIES->setQuery("SELECT IDV, STRUCT AS STRUCT_VOIE FROM VOIES;");
+    structFromPVOIES->setQuery("SELECT IDV, STRUCT AS STRUCT_VOIE FROM PVOIES;");
 
-    if (structFromVOIES->lastError().isValid()) {
-        pLogger->ERREUR(QString("Impossible de recuperer les structuralites dans VOIES : %1").arg(structFromVOIES->lastError().text()));
+    if (structFromPVOIES->lastError().isValid()) {
+        pLogger->ERREUR(QString("Impossible de recuperer les structuralites dans PVOIES : %1").arg(structFromPVOIES->lastError().text()));
         return false;
     }//end if : test requete QSqlQueryModel
 
     for(int v = 0; v < m_nbVoies; v++){
-        int idv = structFromVOIES->record(v).value("IDV").toInt();
-        float struct_voie = structFromVOIES->record(v).value("STRUCT_VOIE").toFloat();
+        int idv = structFromPVOIES->record(v).value("IDV").toInt();
+        float struct_voie = structFromPVOIES->record(v).value("STRUCT_VOIE").toFloat();
 
 
-        QSqlQuery addStructAttInSIF;
-        addStructAttInSIF.prepare("UPDATE SIF SET STRUCT = :ST WHERE idv = :IDV ;");
-        addStructAttInSIF.bindValue(":ST",struct_voie);
-        addStructAttInSIF.bindValue(":IDV",idv);
+        QSqlQuery addStructAttInPIF;
+        addStructAttInPIF.prepare("UPDATE PIF SET STRUCT = :ST WHERE idv = :IDV ;");
+        addStructAttInPIF.bindValue(":ST",struct_voie);
+        addStructAttInPIF.bindValue(":IDV",idv);
 
-        if (! addStructAttInSIF.exec()) {
+        if (! addStructAttInPIF.exec()) {
             pLogger->ERREUR(QString("Impossible d'inserer la structuralité %1 pour la voie %2").arg(struct_voie).arg(idv));
-            pLogger->ERREUR(addStructAttInSIF.lastError().text());
+            pLogger->ERREUR(addStructAttInPIF.lastError().text());
             return false;
         }
 
@@ -1026,10 +665,10 @@ bool Voies::updateSIF(){
     }//end for v
 
     //SUPPRESSION DE L'OBJET
-    delete structFromVOIES;
+    delete structFromPVOIES;
 
     return true;
-}//END updateSIF
+}//END updatePIF
 
 
 //***************************************************************************************************************************************************
@@ -1039,28 +678,28 @@ bool Voies::updateSIF(){
 
 bool Voies::calcStructuralite(){
 
-    if (! pDatabase->columnExists("VOIES", "DEGREE") || ! pDatabase->columnExists("VOIES", "RTOPO") || ! pDatabase->columnExists("VOIES", "STRUCT")) {
+    if (! pDatabase->columnExists("PVOIES", "DEGREE") || ! pDatabase->columnExists("PVOIES", "RTOPO") || ! pDatabase->columnExists("PVOIES", "STRUCT")) {
         pLogger->INFO("---------------------- calcStructuralite START ----------------------");
 
         // AJOUT DE L'ATTRIBUT DE STRUCTURALITE
-        QSqlQueryModel addStructInVOIES;
-        addStructInVOIES.setQuery("ALTER TABLE VOIES ADD DEGREE integer, ADD RTOPO float, ADD STRUCT float;");
+        QSqlQueryModel addStructInPVOIES;
+        addStructInPVOIES.setQuery("ALTER TABLE PVOIES ADD DEGREE integer, ADD RTOPO float, ADD STRUCT float;");
 
-        if (addStructInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de structuralite dans VOIES : %1").arg(addStructInVOIES.lastError().text()));
+        if (addStructInPVOIES.lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de structuralite dans PVOIES : %1").arg(addStructInPVOIES.lastError().text()));
             return false;
         }
 
-        QSqlQueryModel *lengthFromVOIES = new QSqlQueryModel();
+        QSqlQueryModel *lengthFromPVOIES = new QSqlQueryModel();
 
-        lengthFromVOIES->setQuery("SELECT IDV, length AS LENGTH_VOIE FROM VOIES;");
+        lengthFromPVOIES->setQuery("SELECT IDV, length AS LENGTH_VOIE FROM PVOIES;");
 
-        if (lengthFromVOIES->lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible de recuperer les longueurs dans VOIES : %1").arg(lengthFromVOIES->lastError().text()));
+        if (lengthFromPVOIES->lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible de recuperer les longueurs dans PVOIES : %1").arg(lengthFromPVOIES->lastError().text()));
             return false;
         }//end if : test requete QSqlQueryModel
 
-        if(lengthFromVOIES->rowCount() != m_nbVoies){
+        if(lengthFromPVOIES->rowCount() != m_nbVoies){
             pLogger->ERREUR("Le nombre de lignes ne correspond pas /!\\ NOMBRE DE VOIES ");
             return false;
         }
@@ -1076,8 +715,8 @@ bool Voies::calcStructuralite(){
 
         float length_voie[m_nbVoies + 1];
         for(int v = 0; v < m_nbVoies; v++){
-            int idv = lengthFromVOIES->record(v).value("IDV").toInt();
-            length_voie[idv]=lengthFromVOIES->record(v).value("LENGTH_VOIE").toFloat();
+            int idv = lengthFromPVOIES->record(v).value("IDV").toInt();
+            length_voie[idv]=lengthFromPVOIES->record(v).value("LENGTH_VOIE").toFloat();
 
             //writing
             lengthstream << idv;
@@ -1091,7 +730,7 @@ bool Voies::calcStructuralite(){
         lengthqfile.close();
 
         //SUPPRESSION DE L'OBJET
-        delete lengthFromVOIES;
+        delete lengthFromPVOIES;
 
         pLogger->INFO(QString("LONGUEUR TOTALE DU RESEAU : %1 metres").arg(m_length_tot));
 
@@ -1202,15 +841,15 @@ bool Voies::calcStructuralite(){
 
                     if(nbvoies_connexe < m_nbVoies/2){
 
-                        QSqlQuery deleteVOIES;
-                        deleteVOIES.prepare("DELETE FROM VOIES WHERE idv = :IDV ;");
-                        deleteVOIES.bindValue(":IDV",idv1 );
+                        QSqlQuery deletePVOIES;
+                        deletePVOIES.prepare("DELETE FROM PVOIES WHERE idv = :IDV ;");
+                        deletePVOIES.bindValue(":IDV",idv1 );
 
                         nb_voies_supprimees +=1;
 
-                        if (! deleteVOIES.exec()) {
+                        if (! deletePVOIES.exec()) {
                             pLogger->ERREUR(QString("Impossible de supprimer la voie %1").arg(idv1));
-                            pLogger->ERREUR(deleteVOIES.lastError().text());
+                            pLogger->ERREUR(deletePVOIES.lastError().text());
                             return false;
                         }
                     }//end if nbvoies_connexe < m_nbVoies/2
@@ -1251,16 +890,16 @@ bool Voies::calcStructuralite(){
             //}
 
             //INSERTION EN BASE
-            QSqlQuery addStructAttInVOIES;
-            addStructAttInVOIES.prepare("UPDATE VOIES SET DEGREE = :D, RTOPO = :RT, STRUCT = :S WHERE idv = :IDV ;");
-            addStructAttInVOIES.bindValue(":IDV",idv1 );
-            addStructAttInVOIES.bindValue(":D",m_VoieVoies.at(idv1).size());
-            addStructAttInVOIES.bindValue(":RT",rayonTopologique_v);
-            addStructAttInVOIES.bindValue(":S",structuralite_v);
+            QSqlQuery addStructAttInPVOIES;
+            addStructAttInPVOIES.prepare("UPDATE PVOIES SET DEGREE = :D, RTOPO = :RT, STRUCT = :S WHERE idv = :IDV ;");
+            addStructAttInPVOIES.bindValue(":IDV",idv1 );
+            addStructAttInPVOIES.bindValue(":D",m_VoieVoies.at(idv1).size());
+            addStructAttInPVOIES.bindValue(":RT",rayonTopologique_v);
+            addStructAttInPVOIES.bindValue(":S",structuralite_v);
 
-            if (! addStructAttInVOIES.exec()) {
+            if (! addStructAttInPVOIES.exec()) {
                 pLogger->ERREUR(QString("Impossible d'inserer la structuralite %1 et le rayon topo %2 pour la voie %3").arg(structuralite_v).arg(rayonTopologique_v).arg(idv1));
-                pLogger->ERREUR(addStructAttInVOIES.lastError().text());
+                pLogger->ERREUR(addStructAttInPVOIES.lastError().text());
                 return false;
             }
 
@@ -1306,1014 +945,36 @@ bool Voies::calcStructuralite(){
         dtopoqfile.close();
         adjacencyqfile.close();
 
-        if (! pDatabase->add_att_div("VOIES","SOL","STRUCT","LENGTH")) return false;
+        if (! pDatabase->add_att_div("PVOIES","SOL","STRUCT","LENGTH")) return false;
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_S", "STRUCT", 10, true)) return false;
-        if (! pDatabase->add_att_cl("VOIES", "CL_SOL", "SOL", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_S", "STRUCT", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_SOL", "SOL", 10, true)) return false;
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_RTOPO", "RTOPO", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_RTOPO", "RTOPO", 10, true)) return false;
 
-        if (! pDatabase->add_att_dif("VOIES", "DIFF_CL", "CL_S", "CL_RTOPO")) return false;
+        if (! pDatabase->add_att_dif("PVOIES", "DIFF_CL", "CL_S", "CL_RTOPO")) return false;
 
         pLogger->INFO("------------------------ calcStructuralite END ----------------------");
     } else {
-        pLogger->INFO("---------------- Struct attributes already in VOIES -----------------");
+        pLogger->INFO("---------------- Struct attributes already in PVOIES -----------------");
     }
 
     return true;
 
 }//END calcStructuralite
 
-bool Voies::calcStructRel(){
-
-    if (! pDatabase->columnExists("VOIES", "RTOPO_SCL0") ||! pDatabase->columnExists("VOIES", "RTOPO_SCL1") || ! pDatabase->columnExists("VOIES", "RTOPO_MCL0") ||! pDatabase->columnExists("VOIES", "RTOPO_MCL1") || ! pDatabase->columnExists("VOIES", "RTOPO_S1")  || ! pDatabase->columnExists("VOIES", "RTOPO_S2") || ! pDatabase->columnExists("VOIES", "RTOPO_S3")  || ! pDatabase->columnExists("VOIES", "RTOPO_S4") || ! pDatabase->columnExists("VOIES", "RTOPO_S5")  || ! pDatabase->columnExists("VOIES", "RTOPO_S6") || ! pDatabase->columnExists("VOIES", "RTOPO_S7")  || ! pDatabase->columnExists("VOIES", "RTOPO_S8") || ! pDatabase->columnExists("VOIES", "RTOPO_S9")  || ! pDatabase->columnExists("VOIES", "RTOPO_S10")|| ! pDatabase->columnExists("VOIES", "RTOPO_M1")  || ! pDatabase->columnExists("VOIES", "RTOPO_M2") || ! pDatabase->columnExists("VOIES", "RTOPO_M3")  || ! pDatabase->columnExists("VOIES", "RTOPO_M4") || ! pDatabase->columnExists("VOIES", "RTOPO_M5")  || ! pDatabase->columnExists("VOIES", "RTOPO_M6") || ! pDatabase->columnExists("VOIES", "RTOPO_M7")  || ! pDatabase->columnExists("VOIES", "RTOPO_M8") || ! pDatabase->columnExists("VOIES", "RTOPO_M9")  || ! pDatabase->columnExists("VOIES", "RTOPO_M10")) {
-        pLogger->INFO("---------------------- calcStructRel START ----------------------");
-
-        // AJOUT DE L'ATTRIBUT DE STRUCTURALITE RELATIVE
-        QSqlQueryModel addStructRelInVOIES;
-        addStructRelInVOIES.setQuery("ALTER TABLE VOIES ADD RTOPO_SCL0 integer, ADD RTOPO_SCL1 integer, ADD RTOPO_MCL0 integer, ADD RTOPO_MCL1 integer, ADD RTOPO_S1 integer, ADD RTOPO_S2 integer, ADD RTOPO_S3 integer, ADD RTOPO_S4 integer, ADD RTOPO_S5 integer, ADD RTOPO_S6 integer, ADD RTOPO_S7 integer, ADD RTOPO_S8 integer, ADD RTOPO_S9 integer, ADD RTOPO_S10 integer, ADD RTOPO_M1 integer, ADD RTOPO_M2 integer, ADD RTOPO_M3 integer, ADD RTOPO_M4 integer, ADD RTOPO_M5 integer, ADD RTOPO_M6 integer, ADD RTOPO_M7 integer, ADD RTOPO_M8 integer, ADD RTOPO_M9 integer, ADD RTOPO_M10 integer;");
-
-        if (addStructRelInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de structuralité relative dans VOIES : %1").arg(addStructRelInVOIES.lastError().text()));
-            return false;
-        }
-
-        QSqlQueryModel *structFromVOIES = new QSqlQueryModel();
-
-        structFromVOIES->setQuery("SELECT IDV, STRUCT AS STRUCT_VOIE, SOL AS MAILL_VOIE, CL_S AS CL_S, CL_SOL AS CL_SOL  FROM VOIES;");
-
-        if (structFromVOIES->lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible de recuperer les structuralites dans VOIES pour calculer l'inclusion: %1").arg(structFromVOIES->lastError().text()));
-            return false;
-        }//end if : test requete QSqlQueryModel
-
-        //CREATION DES TABLEAUX DONNANT LA STRUCTURALITE ET LA CLASSE DE MAILLANCE DE CHAQUE VOIE
-        float struct_voie[m_nbVoies + 1];
-        float cl_struct_voie[m_nbVoies + 1];
-        float struct_voie_sorted10[10];
-        float sol_voie[m_nbVoies + 1];
-        float cl_sol_voie[m_nbVoies + 1];
-        float sol_voie_sorted10[10];
-
-        for(int i = 0; i < m_nbVoies + 1; i++){
-            struct_voie[i] = 0;
-            sol_voie[i] = 0;
-            cl_struct_voie[i] = 0;
-            cl_sol_voie[i] = 0;
-        }
-
-
-        for(int v = 0; v < m_nbVoies; v++){
-            int idv = structFromVOIES->record(v).value("IDV").toInt();
-            struct_voie[idv]=structFromVOIES->record(v).value("STRUCT_VOIE").toFloat();
-            sol_voie[idv]=structFromVOIES->record(v).value("MAILL_VOIE").toFloat();
-            cl_struct_voie[idv]=structFromVOIES->record(v).value("CL_S").toFloat();
-            cl_sol_voie[idv]=structFromVOIES->record(v).value("CL_SOL").toFloat();
-            m_struct_tot += struct_voie[idv];
-        }//end for v
-
-
-        for(int i = 0; i < 10; i++){
-            struct_voie_sorted10[i] = m_struct_tot;
-        }
-
-        for(int i = 0; i < 10; i++){
-            sol_voie_sorted10[i] = m_struct_tot * m_length_tot;
-        }
-
-
-        //cout<<"m_struct_tot : "<<m_struct_tot<<endl;
-
-         //POUR LE TABLEAU DES 10 MEILLEURES STRUCTURALITES
-
-        //affichage du tableau des 10 meilleures structuralités
-        //for(int v = 1; v < 10; v++){
-        //    cout<<"struct_voie_sorted10["<<v<<"] : "<<struct_voie_sorted10[v]<<endl<<endl;
-        //}//end for v
-
-        for(int v = 1; v < m_nbVoies + 1; v++){
-            if(struct_voie[v] < struct_voie_sorted10[0] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie_sorted10[7];
-                struct_voie_sorted10[7] =  struct_voie_sorted10[6];
-                struct_voie_sorted10[6] =  struct_voie_sorted10[5];
-                struct_voie_sorted10[5] =  struct_voie_sorted10[4];
-                struct_voie_sorted10[4] =  struct_voie_sorted10[3];
-                struct_voie_sorted10[3] =  struct_voie_sorted10[2];
-                struct_voie_sorted10[2] =  struct_voie_sorted10[1];
-                struct_voie_sorted10[1] =  struct_voie_sorted10[0];
-                struct_voie_sorted10[0] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[1] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie_sorted10[7];
-                struct_voie_sorted10[7] =  struct_voie_sorted10[6];
-                struct_voie_sorted10[6] =  struct_voie_sorted10[5];
-                struct_voie_sorted10[5] =  struct_voie_sorted10[4];
-                struct_voie_sorted10[4] =  struct_voie_sorted10[3];
-                struct_voie_sorted10[3] =  struct_voie_sorted10[2];
-                struct_voie_sorted10[2] =  struct_voie_sorted10[1];
-                struct_voie_sorted10[1] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[2] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie_sorted10[7];
-                struct_voie_sorted10[7] =  struct_voie_sorted10[6];
-                struct_voie_sorted10[6] =  struct_voie_sorted10[5];
-                struct_voie_sorted10[5] =  struct_voie_sorted10[4];
-                struct_voie_sorted10[4] =  struct_voie_sorted10[3];
-                struct_voie_sorted10[3] =  struct_voie_sorted10[2];
-                struct_voie_sorted10[2] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[3] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie_sorted10[7];
-                struct_voie_sorted10[7] =  struct_voie_sorted10[6];
-                struct_voie_sorted10[6] =  struct_voie_sorted10[5];
-                struct_voie_sorted10[5] =  struct_voie_sorted10[4];
-                struct_voie_sorted10[4] =  struct_voie_sorted10[3];
-                struct_voie_sorted10[3] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[4] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie_sorted10[7];
-                struct_voie_sorted10[7] =  struct_voie_sorted10[6];
-                struct_voie_sorted10[6] =  struct_voie_sorted10[5];
-                struct_voie_sorted10[5] =  struct_voie_sorted10[4];
-                struct_voie_sorted10[4] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[5] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie_sorted10[7];
-                struct_voie_sorted10[7] =  struct_voie_sorted10[6];
-                struct_voie_sorted10[6] =  struct_voie_sorted10[5];
-                struct_voie_sorted10[5] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[6] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie_sorted10[7];
-                struct_voie_sorted10[7] =  struct_voie_sorted10[6];
-                struct_voie_sorted10[6] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[7] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie_sorted10[7];
-                struct_voie_sorted10[7] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[8] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie_sorted10[8];
-                struct_voie_sorted10[8] =  struct_voie[v];
-            }
-            else if(struct_voie[v] < struct_voie_sorted10[9] && struct_voie[v]!=0 ){
-                struct_voie_sorted10[9] =  struct_voie[v];
-            }
-        }//end for v
-
-        //POUR LE TABLEAU DES 10 MEILLEURES MAILLANCES
-
-        for(int v = 1; v < m_nbVoies + 1; v++){
-                 if(sol_voie[v] < sol_voie_sorted10[0] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie_sorted10[7];
-                     sol_voie_sorted10[7] =  sol_voie_sorted10[6];
-                     sol_voie_sorted10[6] =  sol_voie_sorted10[5];
-                     sol_voie_sorted10[5] =  sol_voie_sorted10[4];
-                     sol_voie_sorted10[4] =  sol_voie_sorted10[3];
-                     sol_voie_sorted10[3] =  sol_voie_sorted10[2];
-                     sol_voie_sorted10[2] =  sol_voie_sorted10[1];
-                     sol_voie_sorted10[1] =  sol_voie_sorted10[0];
-                     sol_voie_sorted10[0] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[1] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie_sorted10[7];
-                     sol_voie_sorted10[7] =  sol_voie_sorted10[6];
-                     sol_voie_sorted10[6] =  sol_voie_sorted10[5];
-                     sol_voie_sorted10[5] =  sol_voie_sorted10[4];
-                     sol_voie_sorted10[4] =  sol_voie_sorted10[3];
-                     sol_voie_sorted10[3] =  sol_voie_sorted10[2];
-                     sol_voie_sorted10[2] =  sol_voie_sorted10[1];
-                     sol_voie_sorted10[1] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[2] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie_sorted10[7];
-                     sol_voie_sorted10[7] =  sol_voie_sorted10[6];
-                     sol_voie_sorted10[6] =  sol_voie_sorted10[5];
-                     sol_voie_sorted10[5] =  sol_voie_sorted10[4];
-                     sol_voie_sorted10[4] =  sol_voie_sorted10[3];
-                     sol_voie_sorted10[3] =  sol_voie_sorted10[2];
-                     sol_voie_sorted10[2] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[3] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie_sorted10[7];
-                     sol_voie_sorted10[7] =  sol_voie_sorted10[6];
-                     sol_voie_sorted10[6] =  sol_voie_sorted10[5];
-                     sol_voie_sorted10[5] =  sol_voie_sorted10[4];
-                     sol_voie_sorted10[4] =  sol_voie_sorted10[3];
-                     sol_voie_sorted10[3] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[4] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie_sorted10[7];
-                     sol_voie_sorted10[7] =  sol_voie_sorted10[6];
-                     sol_voie_sorted10[6] =  sol_voie_sorted10[5];
-                     sol_voie_sorted10[5] =  sol_voie_sorted10[4];
-                     sol_voie_sorted10[4] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[5] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie_sorted10[7];
-                     sol_voie_sorted10[7] =  sol_voie_sorted10[6];
-                     sol_voie_sorted10[6] =  sol_voie_sorted10[5];
-                     sol_voie_sorted10[5] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[6] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie_sorted10[7];
-                     sol_voie_sorted10[7] =  sol_voie_sorted10[6];
-                     sol_voie_sorted10[6] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[7] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie_sorted10[7];
-                     sol_voie_sorted10[7] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[8] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie_sorted10[8];
-                     sol_voie_sorted10[8] =  sol_voie[v];
-                 }
-                 else if(sol_voie[v] < sol_voie_sorted10[9] && sol_voie[v]!=0 ){
-                     sol_voie_sorted10[9] =  sol_voie[v];
-                 }
-             }//end for v
-
-
-        //SUPPRESSION DE L'OBJET
-        delete structFromVOIES;
-
-        //affichage du tableau des 10 meilleures structuralités
-        //for(int v = 1; v < 10; v++){
-        //    cout<<"struct_voie_sorted10["<<v<<"] : "<<struct_voie_sorted10[v]<<endl;
-        //}//end for v
-
-        //tableau des distances topologiques
-        int dtopo_voies_scl0[m_nbVoies + 1];
-        int dtopo_voies_scl1[m_nbVoies + 1];
-        int dtopo_voies_mcl0[m_nbVoies + 1];
-        int dtopo_voies_mcl1[m_nbVoies + 1];
-
-        int dtopo_voies_m1[m_nbVoies + 1];
-        int dtopo_voies_m2[m_nbVoies + 1];
-        int dtopo_voies_m3[m_nbVoies + 1];
-        int dtopo_voies_m4[m_nbVoies + 1];
-        int dtopo_voies_m5[m_nbVoies + 1];
-        int dtopo_voies_m6[m_nbVoies + 1];
-        int dtopo_voies_m7[m_nbVoies + 1];
-        int dtopo_voies_m8[m_nbVoies + 1];
-        int dtopo_voies_m9[m_nbVoies + 1];
-        int dtopo_voies_m10[m_nbVoies + 1];
-
-        int dtopo_voies_s1[m_nbVoies + 1];
-        int dtopo_voies_s2[m_nbVoies + 1];
-        int dtopo_voies_s3[m_nbVoies + 1];
-        int dtopo_voies_s4[m_nbVoies + 1];
-        int dtopo_voies_s5[m_nbVoies + 1];
-        int dtopo_voies_s6[m_nbVoies + 1];
-        int dtopo_voies_s7[m_nbVoies + 1];
-        int dtopo_voies_s8[m_nbVoies + 1];
-        int dtopo_voies_s9[m_nbVoies + 1];
-        int dtopo_voies_s10[m_nbVoies + 1];
-
-        int nb_voiestraitees_s1 = 0;
-        int nb_voiestraitees_s2 = 0;
-        int nb_voiestraitees_s3 = 0;
-        int nb_voiestraitees_s4 = 0;
-        int nb_voiestraitees_s5 = 0;
-        int nb_voiestraitees_s6 = 0;
-        int nb_voiestraitees_s7 = 0;
-        int nb_voiestraitees_s8 = 0;
-        int nb_voiestraitees_s9 = 0;
-        int nb_voiestraitees_s10 = 0;
-
-        for(int i = 0; i < m_nbVoies + 1; i++){
-
-            //CLASSES MAILLANCE
-            //Meshing CL0
-            if(cl_sol_voie[i]<1){
-                dtopo_voies_mcl0[i]=0;
-            }
-            else{
-                dtopo_voies_mcl0[i]=-1;
-            }
-            //Meshing CL1
-            if(cl_sol_voie[i]<2){
-                dtopo_voies_mcl1[i]=0;
-            }
-            else{
-                dtopo_voies_mcl1[i]=-1;
-            }
-
-            //CLASSES STRUCTURALITE
-            //Structurality CL0
-            if(cl_struct_voie[i]<1){
-                dtopo_voies_scl0[i]=0;
-            }
-            else{
-                dtopo_voies_scl0[i]=-1;
-            }
-            //Structurality CL1
-            if(cl_struct_voie[i]<2){
-                dtopo_voies_scl1[i]=0;
-            }
-            else{
-                dtopo_voies_scl1[i]=-1;
-            }
-
-
-            //Structurality MAX1
-            if(struct_voie[i]<=struct_voie_sorted10[0]){
-                dtopo_voies_s1[i]=0;
-                nb_voiestraitees_s1++;
-            }
-            else{
-                dtopo_voies_s1[i]=-1;
-            }
-            //Structurality MAX2
-            if(struct_voie[i]<=struct_voie_sorted10[1]){
-                dtopo_voies_s2[i]=0;
-                nb_voiestraitees_s2++;
-            }
-            else{
-                dtopo_voies_s2[i]=-1;
-            }
-            //Structurality MAX3
-            if(struct_voie[i]<=struct_voie_sorted10[2]){
-                dtopo_voies_s3[i]=0;
-                nb_voiestraitees_s3++;
-            }
-            else{
-                dtopo_voies_s3[i]=-1;
-            }
-            //Structurality MAX4
-            if(struct_voie[i]<=struct_voie_sorted10[3]){
-                dtopo_voies_s4[i]=0;
-                nb_voiestraitees_s4++;
-            }
-            else{
-                dtopo_voies_s4[i]=-1;
-            }
-            //Structurality MAX5
-            if(struct_voie[i]<=struct_voie_sorted10[4]){
-                dtopo_voies_s5[i]=0;
-                nb_voiestraitees_s5++;
-            }
-            else{
-                dtopo_voies_s5[i]=-1;
-            }
-            //Structurality MAX6
-            if(struct_voie[i]<=struct_voie_sorted10[5]){
-                dtopo_voies_s6[i]=0;
-                nb_voiestraitees_s6++;
-            }
-            else{
-                dtopo_voies_s6[i]=-1;
-            }
-            //Structurality MAX7
-            if(struct_voie[i]<=struct_voie_sorted10[6]){
-                dtopo_voies_s7[i]=0;
-                nb_voiestraitees_s7++;
-            }
-            else{
-                dtopo_voies_s7[i]=-1;
-            }
-            //Structurality MAX8
-            if(struct_voie[i]<=struct_voie_sorted10[7]){
-                dtopo_voies_s8[i]=0;
-                nb_voiestraitees_s8++;
-            }
-            else{
-                dtopo_voies_s8[i]=-1;
-            }
-            //Structurality MAX9
-            if(struct_voie[i]<=struct_voie_sorted10[8]){
-                dtopo_voies_s9[i]=0;
-                nb_voiestraitees_s9++;
-            }
-            else{
-                dtopo_voies_s9[i]=-1;
-            }
-            //Structurality MAX10
-            if(struct_voie[i]<=struct_voie_sorted10[9]){
-                dtopo_voies_s10[i]=0;
-                nb_voiestraitees_s10++;
-            }
-            else{
-                dtopo_voies_s10[i]=-1;
-            }
-
-            //Maillance MAX1
-            if(sol_voie[i]<=sol_voie_sorted10[0]){
-                dtopo_voies_m1[i]=0;
-            }
-            else{
-                dtopo_voies_m1[i]=-1;
-            }
-            //Maillance MAX2
-            if(sol_voie[i]<=sol_voie_sorted10[1]){
-                dtopo_voies_m2[i]=0;
-            }
-            else{
-                dtopo_voies_m2[i]=-1;
-            }
-            //Maillance MAX3
-            if(sol_voie[i]<=sol_voie_sorted10[2]){
-                dtopo_voies_m3[i]=0;
-            }
-            else{
-                dtopo_voies_m3[i]=-1;
-            }
-            //Maillance MAX4
-            if(sol_voie[i]<=sol_voie_sorted10[3]){
-                dtopo_voies_m4[i]=0;
-            }
-            else{
-                dtopo_voies_m4[i]=-1;
-            }
-            //Maillance MAX5
-            if(sol_voie[i]<=sol_voie_sorted10[4]){
-                dtopo_voies_m5[i]=0;
-            }
-            else{
-                dtopo_voies_m5[i]=-1;
-            }
-            //Maillance MAX6
-            if(sol_voie[i]<=sol_voie_sorted10[5]){
-                dtopo_voies_m6[i]=0;
-            }
-            else{
-                dtopo_voies_m6[i]=-1;
-            }
-            //Maillance MAX7
-            if(sol_voie[i]<=sol_voie_sorted10[6]){
-                dtopo_voies_m7[i]=0;
-            }
-            else{
-                dtopo_voies_m7[i]=-1;
-            }
-            //Maillance MAX8
-            if(sol_voie[i]<=sol_voie_sorted10[7]){
-                dtopo_voies_m8[i]=0;
-            }
-            else{
-                dtopo_voies_m8[i]=-1;
-            }
-            //Maillance MAX9
-            if(sol_voie[i]<=sol_voie_sorted10[8]){
-                dtopo_voies_m9[i]=0;
-            }
-            else{
-                dtopo_voies_m9[i]=-1;
-            }
-            //Maillance MAX10
-            if(sol_voie[i]<=sol_voie_sorted10[9]){
-                dtopo_voies_m10[i]=0;
-            }
-            else{
-                dtopo_voies_m10[i]=-1;
-            }
-
-
-
-        }//end for i
-
-
-        int dtopo = 0;
-
-        cout<<"m_nbVoies : "<<m_nbVoies<<endl;
-        cout<<"m_nbVoies_supp : "<<m_nbVoies_supp<<endl;
-
-        //on parcourt l'ensemble des voies
-        while(dtopo != m_nbVoies) {
-
-            for(int idv_ref = 1; idv_ref < m_nbVoies + 1; idv_ref++){
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR MCL0************************************
-                if (dtopo_voies_mcl0[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_mcl0[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_mcl0[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR MCL1************************************
-                if (dtopo_voies_mcl1[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_mcl1[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_mcl1[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR SCL0************************************
-                if (dtopo_voies_scl0[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_scl0[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_scl0[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR SCL1************************************
-                if (dtopo_voies_scl1[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_scl1[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_scl1[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S1************************************
-                if (dtopo_voies_s1[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s1[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s1[idv_t] = dtopo +1;
-                            nb_voiestraitees_s1++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S2************************************
-                if (dtopo_voies_s2[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s2[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s2[idv_t] = dtopo +1;
-                            nb_voiestraitees_s2++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S3************************************
-                if (dtopo_voies_s3[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s3[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s3[idv_t] = dtopo +1;
-                            nb_voiestraitees_s3++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S4************************************
-                if (dtopo_voies_s4[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s4[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s4[idv_t] = dtopo +1;
-                            nb_voiestraitees_s4++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S5************************************
-                if (dtopo_voies_s5[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s5[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s5[idv_t] = dtopo +1;
-                            nb_voiestraitees_s5++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S6************************************
-                if (dtopo_voies_s6[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s6[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s6[idv_t] = dtopo +1;
-                            nb_voiestraitees_s6++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S7************************************
-                if (dtopo_voies_s7[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s7[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s7[idv_t] = dtopo +1;
-                            nb_voiestraitees_s7++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S8************************************
-                if (dtopo_voies_s8[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s8[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s8[idv_t] = dtopo +1;
-                            nb_voiestraitees_s8++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S9************************************
-                if (dtopo_voies_s9[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s9[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s9[idv_t] = dtopo +1;
-                            nb_voiestraitees_s9++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR S10************************************
-                if (dtopo_voies_s10[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_s10[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_s10[idv_t] = dtopo +1;
-                            nb_voiestraitees_s10++;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M1************************************
-                if (dtopo_voies_m1[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m1[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m1[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M2************************************
-                if (dtopo_voies_m2[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m2[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m2[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M3************************************
-                if (dtopo_voies_m3[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m3[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m3[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M4************************************
-                if (dtopo_voies_m4[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m4[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m4[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M5************************************
-                if (dtopo_voies_m5[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m5[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m5[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M6************************************
-                if (dtopo_voies_m6[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m6[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m6[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M7************************************
-                if (dtopo_voies_m7[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m7[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m7[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M8************************************
-                if (dtopo_voies_m8[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m8[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m8[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M9************************************
-                if (dtopo_voies_m9[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m9[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m9[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-                //on cherche toutes les voies de l'ordre auquel on se trouve POUR M10************************************
-                if (dtopo_voies_m10[idv_ref] == dtopo){
-
-                    //on cherche toutes les voies qui la croise
-                    for (int v = 0; v < m_VoieVoies.at(idv_ref).size(); v++) {
-                        long idv_t = m_VoieVoies.at(idv_ref).at(v);
-
-                        // = si la voie n'a pas deja ete traitee
-                        if (dtopo_voies_m10[idv_t] == -1){
-
-                            //on actualise sa distance topologique par rapport à la structure
-                            dtopo_voies_m10[idv_t] = dtopo +1;
-
-                        }//end if (voie non traitee)
-                    }//end for v (toutes les voies qui croisent notre voie de référence)
-
-                }//end if (on trouve les voies de l'ordre souhaite)******************************************************
-
-
-
-
-             }//end for idv_ref (voie)
-
-            dtopo++;
-
-        }//end while
-
-
-
-        for(int idv = 1; idv < m_nbVoies + 1; idv++){
-
-            //INSERTION EN BASE
-            QSqlQuery addSRAttInVOIES;
-            addSRAttInVOIES.prepare("UPDATE VOIES SET RTOPO_SCL0 = :RTOPO_SCL0, RTOPO_SCL1 = :RTOPO_SCL1,RTOPO_MCL0 = :RTOPO_MCL0, RTOPO_MCL1 = :RTOPO_MCL1, RTOPO_S1 = :RTOPO_S1, RTOPO_S2 = :RTOPO_S2, RTOPO_S3 = :RTOPO_S3, RTOPO_S4 = :RTOPO_S4, RTOPO_S5 = :RTOPO_S5, RTOPO_S6 = :RTOPO_S6, RTOPO_S7 = :RTOPO_S7, RTOPO_S8 = :RTOPO_S8, RTOPO_S9 = :RTOPO_S9, RTOPO_S10 = :RTOPO_S10, RTOPO_M1 = :RTOPO_M1, RTOPO_M2 = :RTOPO_M2, RTOPO_M3 = :RTOPO_M3, RTOPO_M4 = :RTOPO_M4, RTOPO_M5 = :RTOPO_M5, RTOPO_M6 = :RTOPO_M6, RTOPO_M7 = :RTOPO_M7, RTOPO_M8 = :RTOPO_M8, RTOPO_M9 = :RTOPO_M9, RTOPO_M10 = :RTOPO_M10 WHERE idv = :IDV ;");
-            addSRAttInVOIES.bindValue(":IDV",idv );
-            addSRAttInVOIES.bindValue(":RTOPO_SCL0",dtopo_voies_scl0[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_SCL1",dtopo_voies_scl1[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_MCL0",dtopo_voies_mcl0[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_MCL1",dtopo_voies_mcl1[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S1",dtopo_voies_s1[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S2",dtopo_voies_s2[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S3",dtopo_voies_s3[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S4",dtopo_voies_s4[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S5",dtopo_voies_s5[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S6",dtopo_voies_s6[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S7",dtopo_voies_s7[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S8",dtopo_voies_s8[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S9",dtopo_voies_s9[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_S10",dtopo_voies_s10[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M1",dtopo_voies_m1[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M2",dtopo_voies_m2[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M3",dtopo_voies_m3[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M4",dtopo_voies_m4[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M5",dtopo_voies_m5[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M6",dtopo_voies_m6[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M7",dtopo_voies_m7[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M8",dtopo_voies_m8[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M9",dtopo_voies_m9[idv]);
-            addSRAttInVOIES.bindValue(":RTOPO_M10",dtopo_voies_m10[idv]);
-
-            if (! addSRAttInVOIES.exec()) {
-                pLogger->ERREUR(QString("Impossible d'inserer les structuralité relatives pour la voie %1").arg(idv));
-                pLogger->ERREUR(addSRAttInVOIES.lastError().text());
-                return false;
-            }
-
-        }//end for idv
-
-    } else {
-        pLogger->INFO("---------------- StructRel attributes already in VOIES -----------------");
-    }
-
-    return true;
-
-}//END calcStructRel
 
 bool Voies::calcConnexion(){
 
-    if (! pDatabase->columnExists("VOIES", "NBCSIN") || ! pDatabase->columnExists("VOIES", "NBCSIN_P")) {
+    if (! pDatabase->columnExists("PVOIES", "NBCSIN") || ! pDatabase->columnExists("PVOIES", "NBCSIN_P")) {
         pLogger->INFO("---------------------- calcConnexion START ----------------------");
 
         // AJOUT DE L'ATTRIBUT DE CONNEXION == ORTHOGONALITE
-        QSqlQueryModel addNbcsinInVOIES;
-        addNbcsinInVOIES.setQuery("ALTER TABLE VOIES ADD NBCSIN float, ADD NBCSIN_P float;");
+        QSqlQueryModel addNbcsinInPVOIES;
+        addNbcsinInPVOIES.setQuery("ALTER TABLE PVOIES ADD NBCSIN float, ADD NBCSIN_P float;");
 
-        if (addNbcsinInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter l'attribut nbcsin dans VOIES : %1").arg(addNbcsinInVOIES.lastError().text()));
+        if (addNbcsinInPVOIES.lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible d'ajouter l'attribut nbcsin dans PVOIES : %1").arg(addNbcsinInPVOIES.lastError().text()));
             return false;
         }
 
@@ -2321,7 +982,7 @@ bool Voies::calcConnexion(){
         for(int idv = 1; idv <= m_nbVoies ; idv++){
 
             int nba = m_VoieArcs.at(idv).size();
-            int nbs = m_VoieSommets.at(idv).size();
+            int nbp = m_VoiePlaces.at(idv).size();
             float nbc_sin = 0;
             float nbc_sin_p = 0;
 
@@ -2330,9 +991,9 @@ bool Voies::calcConnexion(){
 
                 int a1 = m_VoieArcs[idv][i];
                 int a2 = m_VoieArcs[idv][i+1];
-                int sommet = m_VoieSommets[idv][i+1];
+                int sommet = m_VoiePlaces[idv][i+1];
 
-                QVector<long> * arcs = m_Graphe->getArcsOfSommet(sommet);
+                QVector<long> * arcs = m_Graphe->getArcsOfPlace(sommet);
 
                 for(int j=0; j<arcs->size(); j++){
 
@@ -2370,7 +1031,7 @@ bool Voies::calcConnexion(){
 
 
             //ETUDE DES SINUS EN FIN DE VOIE
-            if (nba + 1 == nbs){ //on est PAS dans le cas d'une boucle
+            if (nba + 1 == nbp){ //on est PAS dans le cas d'une boucle
 
                 float min_ang;
                 float sin_angsmin;
@@ -2378,9 +1039,9 @@ bool Voies::calcConnexion(){
 
                 //POUR LE PREMIER SOMMET
                 int a1 = m_VoieArcs[idv][0];
-                int sommet = m_VoieSommets[idv][0];
+                int sommet = m_VoiePlaces[idv][0];
 
-                QVector<long> * arcs = m_Graphe->getArcsOfSommet(sommet);
+                QVector<long> * arcs = m_Graphe->getArcsOfPlace(sommet);
 
                 min_ang = arcs->at(0);
                 sin_angsmin = 0;
@@ -2422,9 +1083,9 @@ bool Voies::calcConnexion(){
 
                 //POUR LE DERNIER SOMMET
                 a1 = m_VoieArcs[idv].last();
-                sommet = m_VoieSommets[idv].last();
+                sommet = m_VoiePlaces[idv].last();
 
-                arcs = m_Graphe->getArcsOfSommet(sommet);
+                arcs = m_Graphe->getArcsOfPlace(sommet);
 
                 min_ang = arcs->at(0);
                 sin_angsmin = 0;
@@ -2470,9 +1131,9 @@ bool Voies::calcConnexion(){
 
                 int a1 = m_VoieArcs[idv][0];
                 int a2 = m_VoieArcs[idv].last();
-                int sommet = m_VoieSommets[idv][0];
+                int sommet = m_VoiePlaces[idv][0];
 
-                QVector<long> * arcs = m_Graphe->getArcsOfSommet(sommet);
+                QVector<long> * arcs = m_Graphe->getArcsOfPlace(sommet);
 
                 for(int j=0; j<arcs->size(); j++){
 
@@ -2522,25 +1183,25 @@ bool Voies::calcConnexion(){
 
             //INSERTION EN BASE
 
-            QString addNbcsin = QString("UPDATE VOIES SET NBCSIN = %1, NBCSIN_P = %2 WHERE idv = %3 ;").arg(nbc_sin).arg(nbc_sin_p).arg(idv);
+            QString addNbcsin = QString("UPDATE PVOIES SET NBCSIN = %1, NBCSIN_P = %2 WHERE idv = %3 ;").arg(nbc_sin).arg(nbc_sin_p).arg(idv);
 
             QSqlQuery addNbcsinAttInVOIES;
             addNbcsinAttInVOIES.prepare(addNbcsin);
 
             if (! addNbcsinAttInVOIES.exec()) {
-                pLogger->ERREUR(QString("Impossible d'ajouter la voie %1 dans la table VOIES : %2").arg(idv).arg(addNbcsinAttInVOIES.lastError().text()));
+                pLogger->ERREUR(QString("Impossible d'ajouter la voie %1 dans la table PVOIES : %2").arg(idv).arg(addNbcsinAttInVOIES.lastError().text()));
                 return false;
             }
 
         }//end for idv
 
 
-        if (! pDatabase->add_att_div("VOIES", "CONNECT", "NBCSIN", "NBC")) return false;
-        if (! pDatabase->add_att_div("VOIES", "CONNECT_P", "NBCSIN_P", "NBC_P")) return false;
+        if (! pDatabase->add_att_div("PVOIES", "CONNECT", "NBCSIN", "NBC")) return false;
+        if (! pDatabase->add_att_div("PVOIES", "CONNECT_P", "NBCSIN_P", "NBC_P")) return false;
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_NBCSIN", "NBCSIN", 10, true)) return false;
-        if (! pDatabase->add_att_cl("VOIES", "CL_CONNECT", "CONNECT", 10, true)) return false;
-        if (! pDatabase->add_att_cl("VOIES", "CL_CONNECTP", "CONNECT_P", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_NBCSIN", "NBCSIN", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_CONNECT", "CONNECT", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_CONNECTP", "CONNECT_P", 10, true)) return false;
 
         //CLASSICATION EN 6 CLASSES
         // 0 - 0.6
@@ -2552,23 +1213,23 @@ bool Voies::calcConnexion(){
 
         // AJOUT DE L'ATTRIBUT DE CLASSIF
         QSqlQueryModel addorthoInVOIES;
-        addorthoInVOIES.setQuery("ALTER TABLE VOIES ADD C_ORTHO integer;");
+        addorthoInVOIES.setQuery("ALTER TABLE PVOIES ADD C_ORTHO integer;");
 
         if (addorthoInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter l'attribut c_ortho dans VOIES : %1").arg(addorthoInVOIES.lastError().text()));
+            pLogger->ERREUR(QString("Impossible d'ajouter l'attribut c_ortho dans PVOIES : %1").arg(addorthoInVOIES.lastError().text()));
             return false;
         }
 
         QSqlQueryModel *connectpFromVOIES = new QSqlQueryModel();
 
-        connectpFromVOIES->setQuery("SELECT IDV, CONNECT_P FROM VOIES;");
+        connectpFromVOIES->setQuery("SELECT IDV, CONNECT_P FROM PVOIES;");
 
         if (connectpFromVOIES->lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible de recuperer les connect_p dans VOIES : %1").arg(connectpFromVOIES->lastError().text()));
+            pLogger->ERREUR(QString("Impossible de recuperer les connect_p dans PVOIES : %1").arg(connectpFromVOIES->lastError().text()));
             return false;
         }//end if : test requete QSqlQueryModel
 
-        //CREATION DU TABLEAU DONNANT L'ORTHOGONALITE DE CHAQUE VOIE
+        //CREATION DU TABLEAU DONNANT L'ORTHOGONALITE DE CHAQUE PVOIES
         float connectp_voie[m_nbVoies + 1];
         for(int v = 0; v < m_nbVoies; v++){
 
@@ -2586,7 +1247,7 @@ bool Voies::calcConnexion(){
 
             //INSERTION EN BASE
 
-            QString addOrtho = QString("UPDATE VOIES SET C_ORTHO = %1 WHERE idv = %2 ;").arg(c_connectp).arg(idv);
+            QString addOrtho = QString("UPDATE PVOIES SET C_ORTHO = %1 WHERE idv = %2 ;").arg(c_connectp).arg(idv);
 
             QSqlQuery addOrthoAttInVOIES;
             addOrthoAttInVOIES.prepare(addOrtho);
@@ -2602,7 +1263,7 @@ bool Voies::calcConnexion(){
 
 
     } else {
-        pLogger->INFO("---------------- Connect attributes already in VOIES -----------------");
+        pLogger->INFO("---------------- Connect attributes already in PVOIES -----------------");
     }
 
     return true;
@@ -2611,15 +1272,15 @@ bool Voies::calcConnexion(){
 
 bool Voies::calcUse(){
 
-    if (! pDatabase->columnExists("VOIES", "USE") || ! pDatabase->columnExists("VOIES", "USE_MLT") || ! pDatabase->columnExists("VOIES", "USE_LGT")) {
+    if (! pDatabase->columnExists("PVOIES", "USE") || ! pDatabase->columnExists("PVOIES", "USE_MLT") || ! pDatabase->columnExists("PVOIES", "USE_LGT")) {
         pLogger->INFO("---------------------- calcUse START ----------------------");
 
         // AJOUT DE L'ATTRIBUT DE USE
         QSqlQueryModel addUseInVOIES;
-        addUseInVOIES.setQuery("ALTER TABLE VOIES ADD USE integer, ADD USE_MLT integer, ADD USE_LGT integer;");
+        addUseInVOIES.setQuery("ALTER TABLE PVOIES ADD USE integer, ADD USE_MLT integer, ADD USE_LGT integer;");
 
         if (addUseInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de use dans VOIES : %1").arg(addUseInVOIES.lastError().text()));
+            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de use dans PVOIES : %1").arg(addUseInVOIES.lastError().text()));
             return false;
         }
 
@@ -2646,7 +1307,7 @@ bool Voies::calcUse(){
         //CALCUL DU NOMBRE DE VOIES DE LA PARTIE CONNEXE
         QSqlQueryModel *nombreVOIES = new QSqlQueryModel();
 
-        nombreVOIES->setQuery("SELECT COUNT(IDV) AS NBV FROM VOIES;");
+        nombreVOIES->setQuery("SELECT COUNT(IDV) AS NBV FROM PVOIES;");
 
         if (nombreVOIES->lastError().isValid()) {
             pLogger->ERREUR(QString("Impossible de compter le nombre de VOIES : %1").arg(nombreVOIES->lastError().text()));
@@ -2665,12 +1326,12 @@ bool Voies::calcUse(){
 
 
         //CREATION DU TABLEAU DONNANT LA LONGUEUR DE CHAQUE VOIE
-        QSqlQueryModel *lengthFromVOIES = new QSqlQueryModel();
+        QSqlQueryModel *lengthFromPVOIES = new QSqlQueryModel();
 
-        lengthFromVOIES->setQuery("SELECT IDV, length AS LENGTH_VOIE FROM VOIES;");
+        lengthFromPVOIES->setQuery("SELECT IDV, length AS LENGTH_VOIE FROM PVOIES;");
 
-        if (lengthFromVOIES->lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible de recuperer les longueurs dans VOIES : %1").arg(lengthFromVOIES->lastError().text()));
+        if (lengthFromPVOIES->lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible de recuperer les longueurs dans PVOIES : %1").arg(lengthFromPVOIES->lastError().text()));
             return false;
         }//end if : test requete QSqlQueryModel
 
@@ -2681,15 +1342,15 @@ bool Voies::calcUse(){
         }//end for v
 
         for(int v = 0; v < m_nbVoies; v++){
-            int idv = lengthFromVOIES->record(v).value("IDV").toInt();
-            length_voie[idv] = lengthFromVOIES->record(v).value("LENGTH_VOIE").toFloat();
+            int idv = lengthFromPVOIES->record(v).value("IDV").toInt();
+            length_voie[idv] = lengthFromPVOIES->record(v).value("LENGTH_VOIE").toFloat();
             m_length_tot += length_voie[idv];
         }//end for v
 
         //SI length_voie[v] = -1 ici ça veut dire que la voie n'était pas connexe et a été retirée
 
         //SUPPRESSION DE L'OBJET
-        delete lengthFromVOIES;
+        delete lengthFromPVOIES;
 
 
 
@@ -2926,26 +1587,26 @@ bool Voies::calcUse(){
             int useLGT_v = voie_useLGT[idv];
             if(voie_useLGT[idv] == 0){useLGT_v = voie_use[idv];}
 
-            QSqlQuery addUseAttInVOIES;
-            addUseAttInVOIES.prepare("UPDATE VOIES SET USE = :USE, USE_MLT = :USE_MLT, USE_LGT = :USE_LGT WHERE idv = :IDV ;");
-            addUseAttInVOIES.bindValue(":IDV", idv );
-            addUseAttInVOIES.bindValue(":USE",use_v);
-            addUseAttInVOIES.bindValue(":USE_MLT",useMLT_v);
-            addUseAttInVOIES.bindValue(":USE_LGT",useLGT_v);
+            QSqlQuery addUseAttInPVOIES;
+            addUseAttInPVOIES.prepare("UPDATE PVOIES SET USE = :USE, USE_MLT = :USE_MLT, USE_LGT = :USE_LGT WHERE idv = :IDV ;");
+            addUseAttInPVOIES.bindValue(":IDV", idv );
+            addUseAttInPVOIES.bindValue(":USE",use_v);
+            addUseAttInPVOIES.bindValue(":USE_MLT",useMLT_v);
+            addUseAttInPVOIES.bindValue(":USE_LGT",useLGT_v);
 
-            if (! addUseAttInVOIES.exec()) {
+            if (! addUseAttInPVOIES.exec()) {
                 pLogger->ERREUR(QString("Impossible d'inserer l'a structuralite'attribut use %1 pour la voie %2").arg(use_v).arg(idv));
-                pLogger->ERREUR(addUseAttInVOIES.lastError().text());
+                pLogger->ERREUR(addUseAttInPVOIES.lastError().text());
                 return false;
             }
 
         }//end for idv
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_USE", "USE", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_USE", "USE", 10, true)) return false;
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_USEMLT", "USE_MLT", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_USEMLT", "USE_MLT", 10, true)) return false;
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_USELGT", "USE_LGT", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_USELGT", "USE_LGT", 10, true)) return false;
 
         pLogger->INFO("------------------------ calcUse END ----------------------");
 
@@ -2959,24 +1620,24 @@ bool Voies::calcUse(){
 
 bool Voies::calcInclusion(){
 
-    if (! pDatabase->columnExists("VOIES", "INCL") || ! pDatabase->columnExists("VOIES", "INCL_MOY")) {
+    if (! pDatabase->columnExists("PVOIES", "INCL") || ! pDatabase->columnExists("PVOIES", "INCL_MOY")) {
         pLogger->INFO("---------------------- calcInclusion START ----------------------");
 
         // AJOUT DE L'ATTRIBUT D'INCLUSION
-        QSqlQueryModel addInclInVOIES;
-        addInclInVOIES.setQuery("ALTER TABLE VOIES ADD INCL float, ADD INCL_MOY float;");
+        QSqlQueryModel addInclInPVOIES;
+        addInclInPVOIES.setQuery("ALTER TABLE PVOIES ADD INCL float, ADD INCL_MOY float;");
 
-        if (addInclInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter les attributs d'inclusion dans VOIES : %1").arg(addInclInVOIES.lastError().text()));
+        if (addInclInPVOIES.lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible d'ajouter les attributs d'inclusion dans PVOIES : %1").arg(addInclInPVOIES.lastError().text()));
             return false;
         }
 
-        QSqlQueryModel *structFromVOIES = new QSqlQueryModel();
+        QSqlQueryModel *structFromPVOIES = new QSqlQueryModel();
 
-        structFromVOIES->setQuery("SELECT IDV, STRUCT AS STRUCT_VOIE FROM VOIES;");
+        structFromPVOIES->setQuery("SELECT IDV, STRUCT AS STRUCT_VOIE FROM PVOIES;");
 
-        if (structFromVOIES->lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible de recuperer les structuralites dans VOIES pour calculer l'inclusion: %1").arg(structFromVOIES->lastError().text()));
+        if (structFromPVOIES->lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible de recuperer les structuralites dans PVOIES pour calculer l'inclusion: %1").arg(structFromPVOIES->lastError().text()));
             return false;
         }//end if : test requete QSqlQueryModel
 
@@ -2988,13 +1649,13 @@ bool Voies::calcInclusion(){
         }
 
         for(int v = 0; v < m_nbVoies; v++){
-            int idv = structFromVOIES->record(v).value("IDV").toInt();
-            struct_voie[idv]=structFromVOIES->record(v).value("STRUCT_VOIE").toFloat();
+            int idv = structFromPVOIES->record(v).value("IDV").toInt();
+            struct_voie[idv]=structFromPVOIES->record(v).value("STRUCT_VOIE").toFloat();
             m_struct_tot += struct_voie[idv];
         }//end for v
 
         //SUPPRESSION DE L'OBJET
-        delete structFromVOIES;
+        delete structFromPVOIES;
 
         for(int idv1 = 1; idv1 < m_nbVoies + 1; idv1++){
 
@@ -3013,27 +1674,27 @@ bool Voies::calcInclusion(){
             else {inclusion_moy = 0;}
 
             //INSERTION EN BASE
-            QSqlQuery addInclAttInVOIES;
-            addInclAttInVOIES.prepare("UPDATE VOIES SET INCL = :INCL, INCL_MOY = :INCL_MOY WHERE idv = :IDV ;");
-            addInclAttInVOIES.bindValue(":IDV",idv1 );
-            addInclAttInVOIES.bindValue(":INCL",inclusion);
-            addInclAttInVOIES.bindValue(":INCL_MOY",inclusion_moy);
+            QSqlQuery addInclAttInPVOIES;
+            addInclAttInPVOIES.prepare("UPDATE PVOIES SET INCL = :INCL, INCL_MOY = :INCL_MOY WHERE idv = :IDV ;");
+            addInclAttInPVOIES.bindValue(":IDV",idv1 );
+            addInclAttInPVOIES.bindValue(":INCL",inclusion);
+            addInclAttInPVOIES.bindValue(":INCL_MOY",inclusion_moy);
 
-            if (! addInclAttInVOIES.exec()) {
+            if (! addInclAttInPVOIES.exec()) {
                 pLogger->ERREUR(QString("Impossible d'inserer l'inclusion %1 et l'inclusion moyenne %2 pour la voie %3").arg(inclusion).arg(inclusion_moy).arg(idv1));
-                pLogger->ERREUR(addInclAttInVOIES.lastError().text());
+                pLogger->ERREUR(addInclAttInPVOIES.lastError().text());
                 return false;
             }
 
         }//end for idv1
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_INCL", "INCL", 10, true)) return false;
-        if (! pDatabase->add_att_cl("VOIES", "CL_INCLMOY", "INCL_MOY", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_INCL", "INCL", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_INCLMOY", "INCL_MOY", 10, true)) return false;
 
         pLogger->INFO(QString("STRUCTURALITE TOTALE SUR LE RESEAU : %1").arg(m_struct_tot));
 
     } else {
-        pLogger->INFO("---------------- Incl attributes already in VOIES -----------------");
+        pLogger->INFO("---------------- Incl attributes already in PVOIES -----------------");
     }
 
     return true;
@@ -3042,24 +1703,24 @@ bool Voies::calcInclusion(){
 
 bool Voies::calcLocalAccess(){
 
-    if (! pDatabase->columnExists("VOIES", "LOCAL_ACCESS1") || ! pDatabase->columnExists("VOIES", "LOCAL_ACCESS2") || ! pDatabase->columnExists("VOIES", "LOCAL_ACCESS3")) {
+    if (! pDatabase->columnExists("PVOIES", "LOCAL_ACCESS1") || ! pDatabase->columnExists("PVOIES", "LOCAL_ACCESS2") || ! pDatabase->columnExists("PVOIES", "LOCAL_ACCESS3")) {
         pLogger->INFO("---------------------- calcLocalAccess START ----------------------");
 
         // AJOUT DE L'ATTRIBUT D'ACCESSIBILITE LOCALE
-        QSqlQueryModel addLAInVOIES;
-        addLAInVOIES.setQuery("ALTER TABLE VOIES ADD LOCAL_ACCESS1 integer, ADD LOCAL_ACCESS2 integer, ADD LOCAL_ACCESS3 integer;");
+        QSqlQueryModel addLAInPVOIES;
+        addLAInPVOIES.setQuery("ALTER TABLE PVOIES ADD LOCAL_ACCESS1 integer, ADD LOCAL_ACCESS2 integer, ADD LOCAL_ACCESS3 integer;");
 
-        if (addLAInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter les attributs d'accessibilité locale dans VOIES : %1").arg(addLAInVOIES.lastError().text()));
+        if (addLAInPVOIES.lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible d'ajouter les attributs d'accessibilité locale dans PVOIES : %1").arg(addLAInPVOIES.lastError().text()));
             return false;
         }
 
-        QSqlQueryModel *degreeFromVOIES = new QSqlQueryModel();
+        QSqlQueryModel* degreeFromPVOIES = new QSqlQueryModel();
 
-        degreeFromVOIES->setQuery("SELECT IDV, DEGREE AS DEGREE_VOIE FROM VOIES;");
+        degreeFromPVOIES->setQuery("SELECT IDV, DEGREE AS DEGREE_VOIE FROM PVOIES;");
 
-        if (degreeFromVOIES->lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible de recuperer les degres dans VOIES pour calculer l'acessibilite locale: %1").arg(degreeFromVOIES->lastError().text()));
+        if (degreeFromPVOIES->lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible de recuperer les degres dans PVOIES pour calculer l'acessibilite locale: %1").arg(degreeFromPVOIES->lastError().text()));
             return false;
         }//end if : test requete QSqlQueryModel
 
@@ -3071,12 +1732,12 @@ bool Voies::calcLocalAccess(){
         }
 
         for(int v = 0; v < m_nbVoies; v++){
-            int idv = degreeFromVOIES->record(v).value("IDV").toInt();
-            degree_voie[idv]=degreeFromVOIES->record(v).value("DEGREE_VOIE").toFloat();
+            int idv = degreeFromPVOIES->record(v).value("IDV").toInt();
+            degree_voie[idv]=degreeFromPVOIES->record(v).value("DEGREE_VOIE").toFloat();
         }//end for v
 
         //SUPPRESSION DE L'OBJET
-        delete degreeFromVOIES;
+        delete degreeFromPVOIES;
 
         for(int idv1 = 1; idv1 < m_nbVoies + 1; idv1++){
 
@@ -3110,27 +1771,27 @@ bool Voies::calcLocalAccess(){
 
 
             //INSERTION EN BASE
-            QSqlQuery addInclAttInVOIES;
-            addInclAttInVOIES.prepare("UPDATE VOIES SET LOCAL_ACCESS1 = :LA1, LOCAL_ACCESS2 = :LA2, LOCAL_ACCESS3 = :LA3 WHERE idv = :IDV ;");
-            addInclAttInVOIES.bindValue(":IDV",idv1 );
-            addInclAttInVOIES.bindValue(":LA1",loc_acc_1);
-            addInclAttInVOIES.bindValue(":LA2",loc_acc_2);
-            addInclAttInVOIES.bindValue(":LA3",loc_acc_3);
+            QSqlQuery addInclAttInPVOIES;
+            addInclAttInPVOIES.prepare("UPDATE PVOIES SET LOCAL_ACCESS1 = :LA1, LOCAL_ACCESS2 = :LA2, LOCAL_ACCESS3 = :LA3 WHERE idv = :IDV ;");
+            addInclAttInPVOIES.bindValue(":IDV",idv1 );
+            addInclAttInPVOIES.bindValue(":LA1",loc_acc_1);
+            addInclAttInPVOIES.bindValue(":LA2",loc_acc_2);
+            addInclAttInPVOIES.bindValue(":LA3",loc_acc_3);
 
-            if (! addInclAttInVOIES.exec()) {
+            if (! addInclAttInPVOIES.exec()) {
                 pLogger->ERREUR(QString("Impossible d'inserer l'accessibilite locale 1 %1 2 %2 et 3 %3 pour la voie %4").arg(loc_acc_1).arg(loc_acc_2).arg(loc_acc_3).arg(idv1));
-                pLogger->ERREUR(addInclAttInVOIES.lastError().text());
+                pLogger->ERREUR(addInclAttInPVOIES.lastError().text());
                 return false;
             }
 
         }//end for idv1
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_LA1", "LOCAL_ACCESS1", 10, true)) return false;
-        if (! pDatabase->add_att_cl("VOIES", "CL_LA2", "LOCAL_ACCESS2", 10, true)) return false;
-        if (! pDatabase->add_att_cl("VOIES", "CL_LA3", "LOCAL_ACCESS3", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_LA1", "LOCAL_ACCESS1", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_LA2", "LOCAL_ACCESS2", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_LA3", "LOCAL_ACCESS3", 10, true)) return false;
 
     } else {
-        pLogger->INFO("---------------- Local Access attributes already in VOIES -----------------");
+        pLogger->INFO("---------------- Local Access attributes already in PVOIES -----------------");
     }
 
     return true;
@@ -3139,21 +1800,21 @@ bool Voies::calcLocalAccess(){
 
 bool Voies::calcBruitArcs(){
 
-    if (! pDatabase->columnExists("SIF", "BRUIT_1") || ! pDatabase->columnExists("SIF", "BRUIT_2")  || ! pDatabase->columnExists("SIF", "BRUIT_3")  || ! pDatabase->columnExists("SIF", "BRUIT_4")) {
+    if (! pDatabase->columnExists("PIF", "BRUIT_1") || ! pDatabase->columnExists("PIF", "BRUIT_2")  || ! pDatabase->columnExists("PIF", "BRUIT_3")  || ! pDatabase->columnExists("PIF", "BRUIT_4")) {
         pLogger->INFO("---------------------- calcBruitArcs START ----------------------");
 
         // AJOUT DE L'ATTRIBUT DE BRUIT
-        QSqlQueryModel addBruitInSIF;
-        addBruitInSIF.setQuery("ALTER TABLE SIF ADD BRUIT_1 float, ADD BRUIT_2 float, ADD BRUIT_3 float, ADD BRUIT_4 float;");
+        QSqlQueryModel addBruitInPIF;
+        addBruitInPIF.setQuery("ALTER TABLE PIF ADD BRUIT_1 float, ADD BRUIT_2 float, ADD BRUIT_3 float, ADD BRUIT_4 float;");
 
-        if (addBruitInSIF.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de bruit dans SIF : %1").arg(addBruitInSIF.lastError().text()));
+        if (addBruitInPIF.lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de bruit dans SIF : %1").arg(addBruitInPIF.lastError().text()));
             return false;
         }
 
         QSqlQueryModel *attFromSIF = new QSqlQueryModel();
 
-        attFromSIF->setQuery("SELECT IDA, SI, SF, IDV, ST_length(GEOM) as LENGTH FROM SIF;");
+        attFromSIF->setQuery("SELECT IDA, SI, SF, IDV, ST_length(GEOM) as LENGTH FROM PIF;");
 
         if (attFromSIF->lastError().isValid()) {
             pLogger->ERREUR(QString("Impossible de recuperer les attributs dans SIF: %1").arg(attFromSIF->lastError().text()));
@@ -3241,24 +1902,24 @@ bool Voies::calcBruitArcs(){
 
 
             //INSERTION EN BASE
-            QSqlQuery addBruitAttInSIF;
-            addBruitAttInSIF.prepare("UPDATE SIF SET BRUIT_1 = :B1, BRUIT_2 = :B2, BRUIT_3 = :B3, BRUIT_4 = :B4 WHERE ida = :IDA ;");
-            addBruitAttInSIF.bindValue(":IDA",ida1 );
-            addBruitAttInSIF.bindValue(":B1",bruit_1);
-            addBruitAttInSIF.bindValue(":B2",bruit_2);
-            addBruitAttInSIF.bindValue(":B3",bruit_3);
-            addBruitAttInSIF.bindValue(":B4",bruit_4);
+            QSqlQuery addBruitAttInPIF;
+            addBruitAttInPIF.prepare("UPDATE PIF SET BRUIT_1 = :B1, BRUIT_2 = :B2, BRUIT_3 = :B3, BRUIT_4 = :B4 WHERE ida = :IDA ;");
+            addBruitAttInPIF.bindValue(":IDA",ida1 );
+            addBruitAttInPIF.bindValue(":B1",bruit_1);
+            addBruitAttInPIF.bindValue(":B2",bruit_2);
+            addBruitAttInPIF.bindValue(":B3",bruit_3);
+            addBruitAttInPIF.bindValue(":B4",bruit_4);
 
-            if (! addBruitAttInSIF.exec()) {
+            if (! addBruitAttInPIF.exec()) {
                 pLogger->ERREUR(QString("Impossible d'inserer les bruits 1 %1, 2 %2 et 3 %3 pour l'arc' %4").arg(bruit_1).arg(bruit_2).arg(bruit_3).arg(ida1));
-                pLogger->ERREUR(addBruitAttInSIF.lastError().text());
+                pLogger->ERREUR(addBruitAttInPIF.lastError().text());
                 return false;
             }
 
         }//end for ida1
 
     } else {
-        pLogger->INFO("---------------- Bruit already in SIF -----------------");
+        pLogger->INFO("---------------- Bruit already in PIF -----------------");
     }
 
     return true;
@@ -3268,24 +1929,24 @@ bool Voies::calcBruitArcs(){
 
 bool Voies::calcGradient(){
 
-    if (! pDatabase->columnExists("VOIES", "GRAD") || ! pDatabase->columnExists("VOIES", "GRAD_MOY")) {
+    if (! pDatabase->columnExists("PVOIES", "GRAD") || ! pDatabase->columnExists("PVOIES", "GRAD_MOY")) {
         pLogger->INFO("---------------------- calcGradient START ----------------------");
 
         // AJOUT DE L'ATTRIBUT DE GRADIENT
-        QSqlQueryModel addGradlInVOIES;
-        addGradlInVOIES.setQuery("ALTER TABLE VOIES ADD GRAD float, ADD GRAD_MOY float;");
+        QSqlQueryModel addGradlInPVOIES;
+        addGradlInPVOIES.setQuery("ALTER TABLE PVOIES ADD GRAD float, ADD GRAD_MOY float;");
 
-        if (addGradlInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de gradient dans VOIES : %1").arg(addGradlInVOIES.lastError().text()));
+        if (addGradlInPVOIES.lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible d'ajouter les attributs de gradient dans PVOIES : %1").arg(addGradlInPVOIES.lastError().text()));
             return false;
         }
 
-        QSqlQueryModel *structFromVOIES = new QSqlQueryModel();
+        QSqlQueryModel *structFromPVOIES = new QSqlQueryModel();
 
-        structFromVOIES->setQuery("SELECT IDV, STRUCT AS STRUCT_VOIE FROM VOIES;");
+        structFromPVOIES->setQuery("SELECT IDV, STRUCT AS STRUCT_VOIE FROM PVOIES;");
 
-        if (structFromVOIES->lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible de recuperer les structuralites dans VOIES pour calculer le gradient : %1").arg(structFromVOIES->lastError().text()));
+        if (structFromPVOIES->lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible de recuperer les structuralites dans PVOIES pour calculer le gradient : %1").arg(structFromPVOIES->lastError().text()));
             return false;
         }//end if : test requete QSqlQueryModel
 
@@ -3297,13 +1958,13 @@ bool Voies::calcGradient(){
         }
 
         for(int v = 0; v < m_nbVoies; v++){
-            int idv = structFromVOIES->record(v).value("IDV").toInt();
-            struct_voie[idv]=structFromVOIES->record(v).value("STRUCT_VOIE").toFloat();
+            int idv = structFromPVOIES->record(v).value("IDV").toInt();
+            struct_voie[idv]=structFromPVOIES->record(v).value("STRUCT_VOIE").toFloat();
             m_struct_tot += struct_voie[idv];
         }//end for v
 
         //SUPPRESSION DE L'OBJET
-        delete structFromVOIES;
+        delete structFromPVOIES;
 
         //***********************************************Calcul du gradient :
 
@@ -3349,27 +2010,27 @@ bool Voies::calcGradient(){
             else {gradient_moy = 0;}
 
             //INSERTION EN BASE
-            QSqlQuery addInclAttInVOIES;
-            addInclAttInVOIES.prepare("UPDATE VOIES SET GRAD = :GRAD, GRAD_MOY = :GRAD_MOY WHERE idv = :IDV ;");
-            addInclAttInVOIES.bindValue(":IDV",idv0 );
-            addInclAttInVOIES.bindValue(":GRAD",gradient);
-            addInclAttInVOIES.bindValue(":GRAD_MOY",gradient_moy);
+            QSqlQuery addInclAttInPVOIES;
+            addInclAttInPVOIES.prepare("UPDATE PVOIES SET GRAD = :GRAD, GRAD_MOY = :GRAD_MOY WHERE idv = :IDV ;");
+            addInclAttInPVOIES.bindValue(":IDV",idv0 );
+            addInclAttInPVOIES.bindValue(":GRAD",gradient);
+            addInclAttInPVOIES.bindValue(":GRAD_MOY",gradient_moy);
 
-            if (! addInclAttInVOIES.exec()) {
+            if (! addInclAttInPVOIES.exec()) {
                 pLogger->ERREUR(QString("Impossible d'inserer le gradient %1 et le gradient moyenne %2 pour la voie %3").arg(gradient).arg(gradient_moy).arg(idv0));
-                pLogger->ERREUR(addInclAttInVOIES.lastError().text());
+                pLogger->ERREUR(addInclAttInPVOIES.lastError().text());
                 return false;
             }
 
         }//end for idv0
 
-        if (! pDatabase->add_att_cl("VOIES", "CL_GRAD", "GRAD", 10, true)) return false;
-        if (! pDatabase->add_att_cl("VOIES", "CL_GRADMOY", "GRAD_MOY", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_GRAD", "GRAD", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_GRADMOY", "GRAD_MOY", 10, true)) return false;
 
         pLogger->INFO(QString("STRUCTURALITE TOTALE SUR LE RESEAU : %1").arg(m_struct_tot));
 
     } else {
-        pLogger->INFO("---------------- Grad attributes already in VOIES -----------------");
+        pLogger->INFO("---------------- Grad attributes already in PVOIES -----------------");
     }
 
     return true;
@@ -3445,35 +2106,35 @@ bool Voies::insertINFO(){
         req_voies_avg->setQuery(  "SELECT "
 
                                   "AVG(nba) as AVG_NBA, "
-                                  "AVG(nbs) as AVG_NBS, "
+                                  "AVG(nbp) as AVG_NBP, "
                                   "AVG(nbc) as AVG_NBC, "
                                   "AVG(rtopo) as AVG_O, "
                                   "AVG(struct) as AVG_S, "
 
                                   "STDDEV(length) as STD_L, "
                                   "STDDEV(nba) as STD_NBA, "
-                                  "STDDEV(nbs) as STD_NBS, "
+                                  "STDDEV(nbp) as STD_NBP, "
                                   "STDDEV(nbc) as STD_NBC, "
                                   "STDDEV(rtopo) as STD_O, "
                                   "STDDEV(struct) as STD_S, "
 
                                   "AVG(LOG(length)) as AVG_LOG_L, "
                                   "AVG(LOG(nba)) as AVG_LOG_NBA, "
-                                  "AVG(LOG(nbs)) as AVG_LOG_NBS, "
+                                  "AVG(LOG(nbp)) as AVG_LOG_NBP, "
                                   "AVG(LOG(nbc)) as AVG_LOG_NBC, "
                                   "AVG(LOG(rtopo)) as AVG_LOG_O, "
                                   "AVG(LOG(struct)) as AVG_LOG_S, "
 
                                   "STDDEV(LOG(length)) as STD_LOG_L, "
                                   "STDDEV(LOG(nba)) as STD_LOG_NBA, "
-                                  "STDDEV(LOG(nbs)) as STD_LOG_NBS, "
+                                  "STDDEV(LOG(nbp)) as STD_LOG_NBP, "
                                   "STDDEV(LOG(nbc)) as STD_LOG_NBC, "
                                   "STDDEV(LOG(rtopo)) as STD_LOG_O, "
                                   "STDDEV(LOG(struct)) as STD_LOG_S "
 
-                                  "FROM VOIES "
+                                  "FROM PVOIES "
 
-                                  "WHERE length > 0 AND nba > 0 AND nbs > 0 AND nbc > 0 AND rtopo > 0 AND struct > 0;");
+                                  "WHERE length > 0 AND nba > 0 AND nbp > 0 AND nbc > 0 AND rtopo > 0 AND struct > 0;");
 
         if (req_voies_avg->lastError().isValid()) {
             pLogger->ERREUR(QString("create_info - req_voies_avg : %1").arg(req_voies_avg->lastError().text()));
@@ -3481,28 +2142,28 @@ bool Voies::insertINFO(){
         }//end if : test requete QSqlQueryModel
 
         float avg_nba = req_voies_avg->record(0).value("AVG_NBA").toFloat();
-        float avg_nbs = req_voies_avg->record(0).value("AVG_NBS").toFloat();
+        float avg_nbp = req_voies_avg->record(0).value("AVG_NBP").toFloat();
         float avg_nbc = req_voies_avg->record(0).value("AVG_NBC").toFloat();
         float avg_o = req_voies_avg->record(0).value("AVG_O").toFloat();
         float avg_s = req_voies_avg->record(0).value("AVG_S").toFloat();
 
         float std_length = req_voies_avg->record(0).value("STD_L").toFloat();
         float std_nba = req_voies_avg->record(0).value("STD_NBA").toFloat();
-        float std_nbs = req_voies_avg->record(0).value("STD_NBS").toFloat();
+        float std_nbp = req_voies_avg->record(0).value("STD_NBP").toFloat();
         float std_nbc = req_voies_avg->record(0).value("STD_NBC").toFloat();
         float std_o = req_voies_avg->record(0).value("STD_O").toFloat();
         float std_s = req_voies_avg->record(0).value("STD_S").toFloat();
 
         float avg_log_length = req_voies_avg->record(0).value("AVG_LOG_L").toFloat();
         float avg_log_nba = req_voies_avg->record(0).value("AVG_LOG_NBA").toFloat();
-        float avg_log_nbs = req_voies_avg->record(0).value("AVG_LOG_NBS").toFloat();
+        float avg_log_nbp = req_voies_avg->record(0).value("AVG_LOG_NBP").toFloat();
         float avg_log_nbc = req_voies_avg->record(0).value("AVG_LOG_NBC").toFloat();
         float avg_log_o = req_voies_avg->record(0).value("AVG_LOG_O").toFloat();
         float avg_log_s = req_voies_avg->record(0).value("AVG_LOG_S").toFloat();
 
         float std_log_length = req_voies_avg->record(0).value("STD_LOG_L").toFloat();
         float std_log_nba = req_voies_avg->record(0).value("STD_LOG_NBA").toFloat();
-        float std_log_nbs = req_voies_avg->record(0).value("STD_LOG_NBS").toFloat();
+        float std_log_nbp = req_voies_avg->record(0).value("STD_LOG_NBP").toFloat();
         float std_log_nbc = req_voies_avg->record(0).value("STD_LOG_NBC").toFloat();
         float std_log_o = req_voies_avg->record(0).value("STD_LOG_O").toFloat();
         float std_log_s = req_voies_avg->record(0).value("STD_LOG_S").toFloat();
@@ -3515,7 +2176,7 @@ bool Voies::insertINFO(){
                                   "AVG(angle) as AVG_ANG, "
                                   "STDDEV(angle) as STD_ANG "
 
-                                  "FROM ANGLES WHERE USED;");
+                                  "FROM PANGLES WHERE USED;");
 
         if (req_angles_avg->lastError().isValid()) {
             pLogger->ERREUR(QString("create_info - req_angles_avg : %1").arg(req_angles_avg->lastError().text()));
@@ -3534,15 +2195,15 @@ bool Voies::insertINFO(){
         info_in_db.prepare("INSERT INTO INFO ("
 
                            "methode, seuil_angle, LTOT, N_COUPLES, N_CELIBATAIRES, NV, "
-                           "AVG_LVOIE, STD_LVOIE, AVG_ANG, STD_ANG, AVG_NBA, STD_NBA, AVG_NBS, STD_NBS, AVG_NBC, STD_NBC, AVG_O, STD_O, AVG_S, STD_S, "
-                           "AVG_LOG_LVOIE, STD_LOG_LVOIE, AVG_LOG_NBA, STD_LOG_NBA, AVG_LOG_NBS, STD_LOG_NBS, AVG_LOG_NBC, STD_LOG_NBC, AVG_LOG_O, STD_LOG_O, AVG_LOG_S, STD_LOG_S, "
+                           "AVG_LVOIE, STD_LVOIE, AVG_ANG, STD_ANG, AVG_NBA, STD_NBA, AVG_NBP, STD_NBP, AVG_NBC, STD_NBC, AVG_O, STD_O, AVG_S, STD_S, "
+                           "AVG_LOG_LVOIE, STD_LOG_LVOIE, AVG_LOG_NBA, STD_LOG_NBA, AVG_LOG_NBP, STD_LOG_NBP, AVG_LOG_NBC, STD_LOG_NBC, AVG_LOG_O, STD_LOG_O, AVG_LOG_S, STD_LOG_S, "
                            "ACTIVE) "
 
                            "VALUES ("
 
                            ":M, :SA, :LTOT, :N_COUPLES, :N_CELIBATAIRES, :NV, "
-                           ":AVG_LVOIE, :STD_LVOIE, :AVG_ANG, :STD_ANG, :AVG_NBA, :STD_NBA, :AVG_NBS, :STD_NBS, :AVG_NBC, :STD_NBC, :AVG_O, :STD_O, :AVG_S, :STD_S, "
-                           ":AVG_LOG_LVOIE, :STD_LOG_LVOIE, :AVG_LOG_NBA, :STD_LOG_NBA, :AVG_LOG_NBS, :STD_LOG_NBS, :AVG_LOG_NBC, :STD_LOG_NBC, :AVG_LOG_O, :STD_LOG_O, :AVG_LOG_S, :STD_LOG_S, "
+                           ":AVG_LVOIE, :STD_LVOIE, :AVG_ANG, :STD_ANG, :AVG_NBA, :STD_NBA, :AVG_NBP, :STD_NBP, :AVG_NBC, :STD_NBC, :AVG_O, :STD_O, :AVG_S, :STD_S, "
+                           ":AVG_LOG_LVOIE, :STD_LOG_LVOIE, :AVG_LOG_NBA, :STD_LOG_NBA, :AVG_LOG_NBP, :STD_LOG_NBP, :AVG_LOG_NBC, :STD_LOG_NBC, :AVG_LOG_O, :STD_LOG_O, :AVG_LOG_S, :STD_LOG_S, "
                            "TRUE);");
 
         info_in_db.bindValue(":M",m_methode);
@@ -3558,7 +2219,7 @@ bool Voies::insertINFO(){
         info_in_db.bindValue(":STD_ANG",std_ang);
 
         info_in_db.bindValue(":AVG_NBA",avg_nba);
-        info_in_db.bindValue(":AVG_NBS",avg_nbs);
+        info_in_db.bindValue(":AVG_NBP",avg_nbp);
         info_in_db.bindValue(":AVG_NBC",avg_nbc);
         info_in_db.bindValue(":AVG_O",avg_o);
         info_in_db.bindValue(":AVG_S",avg_s);
@@ -3566,14 +2227,14 @@ bool Voies::insertINFO(){
         info_in_db.bindValue(":STD_LVOIE",std_length);
         info_in_db.bindValue(":STD_NBA",std_nba);
         info_in_db.bindValue(":STD_NBA",std_nba);
-        info_in_db.bindValue(":STD_NBS",std_nbs);
+        info_in_db.bindValue(":STD_NBP",std_nbp);
         info_in_db.bindValue(":STD_NBC",std_nbc);
         info_in_db.bindValue(":STD_O",std_o);
         info_in_db.bindValue(":STD_S",std_s);
 
         info_in_db.bindValue(":AVG_LOG_LVOIE",avg_log_length);
         info_in_db.bindValue(":AVG_LOG_NBA",avg_log_nba);
-        info_in_db.bindValue(":AVG_LOG_NBS",avg_log_nbs);
+        info_in_db.bindValue(":AVG_LOG_NBP",avg_log_nbp);
         info_in_db.bindValue(":AVG_LOG_NBC",avg_log_nbc);
         info_in_db.bindValue(":AVG_LOG_O",avg_log_o);
         info_in_db.bindValue(":AVG_LOG_S",avg_log_s);
@@ -3581,14 +2242,14 @@ bool Voies::insertINFO(){
         info_in_db.bindValue(":STD_LOG_LVOIE",std_log_length);
         info_in_db.bindValue(":STD_LOG_NBA",std_log_nba);
         info_in_db.bindValue(":STD_LOG_NBA",std_log_nba);
-        info_in_db.bindValue(":STD_LOG_NBS",std_log_nbs);
+        info_in_db.bindValue(":STD_LOG_NBP",std_log_nbp);
         info_in_db.bindValue(":STD_LOG_NBC",std_log_nbc);
         info_in_db.bindValue(":STD_LOG_O",std_log_o);
         info_in_db.bindValue(":STD_LOG_S",std_log_s);
 
 
         if (! info_in_db.exec()) {
-            pLogger->ERREUR(QString("Impossible d'inserer les infos (sur VOIES) dans la table INFO : %1").arg(info_in_db.lastError().text()));
+            pLogger->ERREUR(QString("Impossible d'inserer les infos (sur PVOIES) dans la table INFO : %1").arg(info_in_db.lastError().text()));
             return false;
         }
 
@@ -3603,7 +2264,7 @@ bool Voies::insertINFO(){
 //***************************************************************************************************************************************************
 
 //***************************************************************************************************************************************************
-//CONSTRUCTION DE LA TABLE DES VOIES
+//CONSTRUCTION DE LA TABLE DES PVOIES
 //
 //***************************************************************************************************************************************************
 
@@ -3615,12 +2276,12 @@ bool Voies::do_Voies(){
     // Construction des attributs membres des voies
     if (! buildVectors()) return false;
 
-    // Construction de la table VOIES en BDD
-    if (! build_VOIES()) {
-        if (! pDatabase->dropTable("VOIES")) {
-            pLogger->ERREUR("build_VOIES en erreur, ROLLBACK (drop VOIES) echoue");
+    // Construction de la table PVOIES en BDD
+    if (! build_PVOIES()) {
+        if (! pDatabase->dropTable("PVOIES")) {
+            pLogger->ERREUR("build_PVOIES en erreur, ROLLBACK (drop PVOIES) echoue");
         } else {
-            pLogger->INFO("build_VOIES en erreur, ROLLBACK (drop VOIES) reussi");
+            pLogger->INFO("build_PVOIES en erreur, ROLLBACK (drop PVOIES) reussi");
         }
         return false;
     }
@@ -3630,29 +2291,29 @@ bool Voies::do_Voies(){
 }//end do_Voie
 
 //***************************************************************************************************************************************************
-//INSERTION DES ATTRIBUTS DES VOIES
+//INSERTION DES ATTRIBUTS DES PVOIES
 //
 //***************************************************************************************************************************************************
 
 bool Voies::do_Att_Arc(){
 
         if (! calcBruitArcs()) {
-            if (! pDatabase->dropColumn("SIF", "BRUIT_1")) {
+            if (! pDatabase->dropColumn("PIF", "BRUIT_1")) {
                 pLogger->ERREUR("calcBruitArcs en erreur, ROLLBACK (drop column BRUIT_1) echoue");
             } else {
                 pLogger->INFO("calcBruitArcs en erreur, ROLLBACK (drop column BRUIT_1) reussi");
             }
-            if (! pDatabase->dropColumn("SIF", "BRUIT_2")) {
+            if (! pDatabase->dropColumn("PIF", "BRUIT_2")) {
                 pLogger->ERREUR("calcBruitArcs en erreur, ROLLBACK (drop column BRUIT_2) echoue");
             } else {
                 pLogger->INFO("calcBruitArcs en erreur, ROLLBACK (drop column BRUIT_2) reussi");
             }
-            if (! pDatabase->dropColumn("SIF", "BRUIT_3")) {
+            if (! pDatabase->dropColumn("PIF", "BRUIT_3")) {
                 pLogger->ERREUR("calcBruitArcs en erreur, ROLLBACK (drop column BRUIT_3) echoue");
             } else {
                 pLogger->INFO("calcBruitArcs en erreur, ROLLBACK (drop column BRUIT_3) reussi");
             }
-            if (! pDatabase->dropColumn("SIF", "BRUIT_4")) {
+            if (! pDatabase->dropColumn("PIF", "BRUIT_4")) {
                 pLogger->ERREUR("calcBruitArcs en erreur, ROLLBACK (drop column BRUIT_3) echoue");
             } else {
                 pLogger->INFO("calcBruitArcs en erreur, ROLLBACK (drop column BRUIT_3) reussi");
@@ -3660,33 +2321,35 @@ bool Voies::do_Att_Arc(){
             return false;
         }
 
+        return true;
+
 }//end do_Att_Arc
 
 bool Voies::do_Att_Voie(bool connexion, bool use, bool inclusion, bool gradient, bool local_access){
 
     // Calcul de la structuralite
     if (! calcStructuralite()) {
-        if (! pDatabase->dropColumn("VOIES", "DEGREE")) {
+        if (! pDatabase->dropColumn("PVOIES", "DEGREE")) {
             pLogger->ERREUR("calcStructuralite en erreur, ROLLBACK (drop column DEGREE) echoue");
         } else {
             pLogger->INFO("calcStructuralite en erreur, ROLLBACK (drop column DEGREE) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO")) {
+        if (! pDatabase->dropColumn("PVOIES", "RTOPO")) {
             pLogger->ERREUR("calcStructuralite en erreur, ROLLBACK (drop column RTOPO) echoue");
         } else {
             pLogger->INFO("calcStructuralite en erreur, ROLLBACK (drop column RTOPO) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "STRUCT")) {
+        if (! pDatabase->dropColumn("PVOIES", "STRUCT")) {
             pLogger->ERREUR("calcStructuralite en erreur, ROLLBACK (drop column STRUCT) echoue");
         } else {
             pLogger->INFO("calcStructuralite en erreur, ROLLBACK (drop column STRUCT) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "CL_S")) {
+        if (! pDatabase->dropColumn("PVOIES", "CL_S")) {
             pLogger->ERREUR("calcStructuralite en erreur, ROLLBACK (drop column CL_S) echoue");
         } else {
             pLogger->INFO("calcStructuralite en erreur, ROLLBACK (drop column CL_S) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "SOL")) {
+        if (! pDatabase->dropColumn("PVOIES", "SOL")) {
             pLogger->ERREUR("calcStructuralite en erreur, ROLLBACK (drop column SOL) echoue");
         } else {
             pLogger->INFO("calcStructuralite en erreur, ROLLBACK (drop column SOL) reussi");
@@ -3694,143 +2357,20 @@ bool Voies::do_Att_Voie(bool connexion, bool use, bool inclusion, bool gradient,
         return false;
     }
 
-    if (! calcStructRel()){
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_SCL0")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_SCL0) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_SCL0) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_SCL1")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_SCL1) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_SCL1) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_MCL0")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_MCL0) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_MCL0) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_MCL1")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_MCL1) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_MCL1) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S1")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S1) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S1) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S2")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S2) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S2) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S3")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S3) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S3) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S4")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S4) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S4) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S5")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S5) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S5) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S6")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S6) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S6) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S7")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S7) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S7) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S8")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S8) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S8) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S9")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S9) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S9) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_S10")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S10) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_S10) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M1")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M1) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M1) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M2")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M2) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M2) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M3")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M31) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M3) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M4")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M4) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M4) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M5")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M5) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M5) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M6")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M6) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M6) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M7")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M7) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M7) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M8")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M8) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M8) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M9")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M9) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M9) reussi");
-        }
-        if (! pDatabase->dropColumn("VOIES", "RTOPO_M10")) {
-            pLogger->ERREUR("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M10) echoue");
-        } else {
-            pLogger->INFO("calcStructuraliteRel en erreur, ROLLBACK (drop column RTOPO_M10) reussi");
-        }
-        return false;
-    }
 
     //calcul des angles de connexions (orthogonalité)
     if (connexion && ! calcConnexion()) {
-        if (! pDatabase->dropColumn("VOIES", "NBCSIN")) {
+        if (! pDatabase->dropColumn("PVOIES", "NBCSIN")) {
             pLogger->ERREUR("calcConnexion en erreur, ROLLBACK (drop column NBCSIN) echoue");
         } else {
             pLogger->INFO("calcConnexion en erreur, ROLLBACK (drop column NBCSIN) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "NBCSIN_P")) {
+        if (! pDatabase->dropColumn("PVOIES", "NBCSIN_P")) {
             pLogger->ERREUR("calcConnexion en erreur, ROLLBACK (drop column NBCSIN_P) echoue");
         } else {
             pLogger->INFO("calcConnexion en erreur, ROLLBACK (drop column NBCSIN_P) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "C_ORTHO")) {
+        if (! pDatabase->dropColumn("PVOIES", "C_ORTHO")) {
             pLogger->ERREUR("calcConnexion en erreur, ROLLBACK (drop column C_ORTHO) echoue");
         } else {
             pLogger->INFO("calcConnexion en erreur, ROLLBACK (drop column C_ORTHO) reussi");
@@ -3841,17 +2381,17 @@ bool Voies::do_Att_Voie(bool connexion, bool use, bool inclusion, bool gradient,
 
     //calcul des utilisation (betweenness)
     if (use && ! calcUse()) {
-        if (! pDatabase->dropColumn("VOIES", "USE")) {
+        if (! pDatabase->dropColumn("PVOIES", "USE")) {
             pLogger->ERREUR("calcUse en erreur, ROLLBACK (drop column USE) echoue");
         } else {
             pLogger->INFO("calcUse en erreur, ROLLBACK (drop column USE) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "USE_MLT")) {
+        if (! pDatabase->dropColumn("PVOIES", "USE_MLT")) {
             pLogger->ERREUR("calcUse en erreur, ROLLBACK (drop column USE_MLT) echoue");
         } else {
             pLogger->INFO("calcUse en erreur, ROLLBACK (drop column USE_MLT) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "USE_LGT")) {
+        if (! pDatabase->dropColumn("PVOIES", "USE_LGT")) {
             pLogger->ERREUR("calcUse en erreur, ROLLBACK (drop column USE_LGT) echoue");
         } else {
             pLogger->INFO("calcUse en erreur, ROLLBACK (drop column USE_LGT) reussi");
@@ -3861,12 +2401,12 @@ bool Voies::do_Att_Voie(bool connexion, bool use, bool inclusion, bool gradient,
 
     // Calcul de l'inclusion
     if (inclusion && ! calcInclusion()) {
-        if (! pDatabase->dropColumn("VOIES", "INCL")) {
+        if (! pDatabase->dropColumn("PVOIES", "INCL")) {
             pLogger->ERREUR("calcInclusion en erreur, ROLLBACK (drop column INCL) echoue");
         } else {
             pLogger->INFO("calcInclusion en erreur, ROLLBACK (drop column INCL) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "INCL_MOY")) {
+        if (! pDatabase->dropColumn("PVOIES", "INCL_MOY")) {
             pLogger->ERREUR("calcInclusion en erreur, ROLLBACK (drop column INCL_MOY) echoue");
         } else {
             pLogger->INFO("calcInclusion en erreur, ROLLBACK (drop column INCL_MOY) reussi");
@@ -3876,17 +2416,17 @@ bool Voies::do_Att_Voie(bool connexion, bool use, bool inclusion, bool gradient,
 
     // Calcul de l'accebilité locale
     if(local_access && ! calcLocalAccess() ){
-        if (! pDatabase->dropColumn("VOIES", "LOCAL_ACCESS1")) {
+        if (! pDatabase->dropColumn("PVOIES", "LOCAL_ACCESS1")) {
             pLogger->ERREUR("calcLocalAccess en erreur, ROLLBACK (drop column LOCAL_ACCESS1) echoue");
         } else {
             pLogger->INFO("calcLocalAccess en erreur, ROLLBACK (drop column LOCAL_ACCESS1) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "LOCAL_ACCESS2")) {
+        if (! pDatabase->dropColumn("PVOIES", "LOCAL_ACCESS2")) {
             pLogger->ERREUR("calcLocalAccess en erreur, ROLLBACK (drop column LOCAL_ACCESS2) echoue");
         } else {
             pLogger->INFO("calcLocalAccess en erreur, ROLLBACK (drop column LOCAL_ACCESS2) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "LOCAL_ACCESS3")) {
+        if (! pDatabase->dropColumn("PVOIES", "LOCAL_ACCESS3")) {
             pLogger->ERREUR("calcLocalAccess en erreur, ROLLBACK (drop column LOCAL_ACCESS3) echoue");
         } else {
             pLogger->INFO("calcLocalAccess en erreur, ROLLBACK (drop column LOCAL_ACCESS3) reussi");
@@ -3896,12 +2436,12 @@ bool Voies::do_Att_Voie(bool connexion, bool use, bool inclusion, bool gradient,
 
     // Calcul du gradient
     if (gradient && ! calcGradient()) {
-        if (! pDatabase->dropColumn("VOIES", "GRAD")) {
+        if (! pDatabase->dropColumn("PVOIES", "GRAD")) {
             pLogger->ERREUR("calcGradient en erreur, ROLLBACK (drop column GRAD) echoue");
         } else {
             pLogger->INFO("calcGradient en erreur, ROLLBACK (drop column GRAD) reussi");
         }
-        if (! pDatabase->dropColumn("VOIES", "GRAD_MOY")) {
+        if (! pDatabase->dropColumn("PVOIES", "GRAD_MOY")) {
             pLogger->ERREUR("calcGradient en erreur, ROLLBACK (drop column GRAD_MOY) echoue");
         } else {
             pLogger->INFO("calcGradient en erreur, ROLLBACK (drop column GRAD_MOY) reussi");
@@ -3910,11 +2450,11 @@ bool Voies::do_Att_Voie(bool connexion, bool use, bool inclusion, bool gradient,
     }
 
 
-    //construction de la table VOIES en BDD
+    //construction de la table PVOIES en BDD
     if (! insertINFO()) return false;
 
-    //upadte SIF
-    if (! updateSIF()) return false;
+    //upadte PIF
+    if (! updatePIF()) return false;
 
     return true;
 
