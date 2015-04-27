@@ -59,7 +59,7 @@ bool Voies::findCouplesAngleMin(int idp)
 
     QSqlQueryModel modelAngles;
     QSqlQuery queryAngles;
-    queryAngles.prepare("SELECT IDA1, IDA2, ANGLE, DISTANCE, ANGLE*DISTANCE*DISTANCE AS AD FROM PANGLES WHERE IDP = :IDP ORDER BY AD;");
+    queryAngles.prepare("SELECT IDA1, IDA2, ANGLE, COEF FROM PANGLES WHERE IDP = :IDP ORDER BY COEF;");
     queryAngles.bindValue(":IDP",idp);
 
     if (! queryAngles.exec()) {
@@ -73,14 +73,9 @@ bool Voies::findCouplesAngleMin(int idp)
 
     for (int ang = 0; ang < modelAngles.rowCount(); ang++) {
 
-        if (modelAngles.record(ang).value("ANGLE").toDouble() > m_seuil_angle) {
+        if (modelAngles.record(ang).value("ANGLE").toDouble() > m_seuil_angle * PI / 180) {
             continue;
         }
-
-        /*
-        if (modelAngles.record(ang).value("DISTANCE").toDouble() > 10) {
-            continue;
-        }*/
 
         int a1 = modelAngles.record(ang).value("IDA1").toInt();
         int a2 = modelAngles.record(ang).value("IDA2").toInt();
@@ -1015,7 +1010,7 @@ bool Voies::calcConnexion(){
                     else ang = ang2;
 
                     //entre 0 et 180, le sinus est positif
-                    float sin_ang = sin(ang*(PI/180));
+                    float sin_ang = sin(ang);
 
                     if (sin_ang < 0){
                         pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (sin_ang = %1)").arg(sin_ang));
@@ -1061,7 +1056,7 @@ bool Voies::calcConnexion(){
                     }
 
                     //entre 0 et 180, le sinus est positif
-                    float sin_ang = sin(ang1*(PI/180));
+                    float sin_ang = sin(ang1);
 
                     if (sin_ang < 0){
                         pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (sin_ang = %1)").arg(sin_ang));
@@ -1106,7 +1101,7 @@ bool Voies::calcConnexion(){
                     }
 
                     //entre 0 et 180, le sinus est positif
-                    float sin_ang = sin(ang1*(PI/180));
+                    float sin_ang = sin(ang1);
 
                     if (sin_ang < 0){
                         pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (sin_ang = %1)").arg(sin_ang));
@@ -1155,7 +1150,7 @@ bool Voies::calcConnexion(){
                     else ang = ang2;
 
                     //entre 0 et 180, le sinus est positif
-                    float sin_ang = sin(ang*(PI/180));
+                    float sin_ang = sin(ang);
 
                     if (sin_ang < 0){
                         pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (sin_ang = %1)").arg(sin_ang));

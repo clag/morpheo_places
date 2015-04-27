@@ -5,6 +5,7 @@
 #include <QtSql>
 #include "Logger.h"
 #include "Database.h"
+#define PI 3.1415926535897932384626433832795
 
 using namespace std;
 #include <vector>
@@ -35,6 +36,13 @@ public:
     bool getPlacesOfArcs(int ida, int* pi, int* pf);
     double getAngle(int idp, int ida1, int ida2);
     bool checkAngle(int idp, int ida1, int ida2);
+
+    static double getAngleFromAzimuths(double az1, double az2) {
+        double angle = fabs(az1 - az2);
+        if (angle > PI) angle = 2*PI - angle;
+        angle = fabs(angle - PI);
+        return angle;
+    }
 
 private:
 

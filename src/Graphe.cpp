@@ -11,7 +11,6 @@ using namespace std;
 #include <sstream>
 
 #include <vector>
-#define PI 3.1415926535897932384626433832795
 
 
 //***************************************************************************************************************************************************
@@ -119,8 +118,8 @@ bool Graphe::build_PIF(QSqlQueryModel* arcs_bruts){
             addInPIF.bindValue(":SI",QVariant(id_pi));
             addInPIF.bindValue(":SF",QVariant(id_pf));
             addInPIF.bindValue(":GEOM",QVariant(geom));
-            addInPIF.bindValue(":AI",arcs_bruts->record(i).value("AZIMUTH_I").toDouble() * 180.0 / PI);
-            addInPIF.bindValue(":AF",arcs_bruts->record(i).value("AZIMUTH_F").toDouble() * 180.0 / PI);
+            addInPIF.bindValue(":AI",arcs_bruts->record(i).value("AZIMUTH_I").toDouble() );
+            addInPIF.bindValue(":AF",arcs_bruts->record(i).value("AZIMUTH_F").toDouble() );
 
             if (! addInPIF.exec()) {
                 pLogger->ERREUR(QString("Impossible d'inserer l'identifiant des places %1 et %2 dans PIF. Arc : %3 / record %4").arg(id_pi).arg(id_pf).arg(ida).arg(i));
@@ -209,7 +208,7 @@ bool Graphe::build_PANGLES(){
         pLogger->INFO("-------------------------- build_PANGLES START ------------------------");
 
         QSqlQueryModel createTablePANGLES;
-        createTablePANGLES.setQuery("CREATE TABLE PANGLES (ID SERIAL NOT NULL PRIMARY KEY, IDP bigint, IDA1 bigint, IDA2 bigint, ANGLE double precision, DISTANCE double precision, AZ double precision, USED boolean, "
+        createTablePANGLES.setQuery("CREATE TABLE PANGLES (ID SERIAL NOT NULL PRIMARY KEY, IDP bigint, IDA1 bigint, IDA2 bigint, ANGLE double precision, COEF double precision, USED boolean, "
                                 "FOREIGN KEY (IDP) REFERENCES PLACES(ID), FOREIGN KEY (IDA1) REFERENCES PIF(IDA), FOREIGN KEY (IDA2) REFERENCES PIF(IDA) );");
 
         if (createTablePANGLES.lastError().isValid()) {
@@ -223,7 +222,10 @@ bool Graphe::build_PANGLES(){
 
 
         QSqlQuery addAngle;
-        addAngle.prepare("INSERT INTO PANGLES(IDP, IDA1, IDA2, ANGLE, AZ, DISTANCE, USED) VALUES (:IDP, :IDA1, :IDA2, :ANGLE, ST_Azimuth(:S12, :S22), ST_Distance(:S1, :S2), FALSE);");
+        addAngle.prepare("INSERT INTO PANGLES(IDP, IDA1, IDA2, ANGLE, PHI1, PHI2, DIST, USED) VALUES (:IDP, :IDA1, :IDA2, :ANGLE, :PHI1, :PHI2, :DIST, FALSE);");
+
+        QSqlQuery calcAzimuth;
+        calcAzimuth.prepare("SELECT ST_azimuth(:S11::geometry, :S21::geometry) AS AZ, ST_azimuth(:S22::geometry, :S12::geometry) AS AZinv, ST_distance(:S13,:S23) AS DIST;");
 
         for (int p = 1; p <= m_nbPlaces; p++) {
             queryArcs.bindValue(":IDPI",p);
@@ -242,23 +244,43 @@ bool Graphe::build_PANGLES(){
                 int pf1 = modelArcs->record(a1).value("PF").toInt();
                 QVariant si1 = modelArcs->record(a1).value("SI");
                 QVariant sf1 = modelArcs->record(a1).value("SF");
-                int azi1 = modelArcs->record(a1).value("AI").toDouble();
-                int azf1 = modelArcs->record(a1).value("AF").toDouble();
+                double azi1 = modelArcs->record(a1).value("AI").toDouble();
+                double azf1 = modelArcs->record(a1).value("AF").toDouble();
+
+
 
                 // On traite le cas particulier de l'arc boucle (pi = pf)
                 if (pi1 == pf1 && pi1 == p) {
-                    double angle = fabs(azi1 - azf1);
-                    if (angle > 180.) angle = 360.0 - angle;
-                    angle = fabs(angle - 180.);
+                    double angle = getAngleFromAzimuths(azi1, azf1);
+
+                    calcAzimuth.bindValue(":S11", si1);
+                    calcAzimuth.bindValue(":S21", sf1);
+                    calcAzimuth.bindValue(":S12", si1);
+                    calcAzimuth.bindValue(":S22", sf1);
+                    calcAzimuth.bindValue(":S13", si1);
+                    calcAzimuth.bindValue(":S23", sf1);
+
+                    if (! calcAzimuth.exec()) {
+                        pLogger->ERREUR(QString("Récupération de l'azimuth et de la distance : %1").arg(calcAzimuth.lastError().text()));
+                        return false;
+                    }
+
+                    QSqlQueryModel resAzDist;
+                    resAzDist.setQuery(calcAzimuth);
+                    double az = resAzDist.record(0).value("AZ").toDouble();
+                    double azinv = resAzDist.record(0).value("AZinv").toDouble();
+                    double dist = resAzDist.record(0).value("AZ").toDouble();
+
+                    double phi1 = getAngleFromAzimuths(az, azi1);
+                    double phi2 = getAngleFromAzimuths(azinv, azi1);
+
+                    double coef = (fabs(sin(phi1)) + fabs(sin(phi2)))*dist;
 
                     addAngle.bindValue(":IDP",p);
                     addAngle.bindValue(":IDA1",ida1);
                     addAngle.bindValue(":IDA2",ida1);
                     addAngle.bindValue(":ANGLE",angle);
-                    addAngle.bindValue(":S1", si1);
-                    addAngle.bindValue(":S2", sf1);
-                    addAngle.bindValue(":S12", si1);
-                    addAngle.bindValue(":S22", sf1);
+                    addAngle.bindValue(":COEF",coef);
 
                     if (! addAngle.exec()) {
                         pLogger->ERREUR(QString("Ajout de l'angle entre l'arc %1 et lui-même (arc boucle) : %2").arg(ida1).arg(addAngle.lastError().text()));
@@ -274,22 +296,40 @@ bool Graphe::build_PANGLES(){
                     int pf2 = modelArcs->record(a2).value("PF").toInt();
                     QVariant si2 = modelArcs->record(a2).value("SI");
                     QVariant sf2 = modelArcs->record(a2).value("SF");
-                    int azi2 = modelArcs->record(a2).value("AI").toDouble();
-                    int azf2 = modelArcs->record(a2).value("AF").toDouble();
+                    double azi2 = modelArcs->record(a2).value("AI").toDouble();
+                    double azf2 = modelArcs->record(a2).value("AF").toDouble();
 
                     if (pi1 == pi2 && pi1 == p) {
-                        double angle = fabs(azi1 - azi2);
-                        if (angle > 180.) angle = 360.0 - angle;
-                        angle = fabs(angle - 180.);
+                        double angle = getAngleFromAzimuths(azi1, azi2);
+
+                        calcAzimuth.bindValue(":S11", si1);
+                        calcAzimuth.bindValue(":S21", si2);
+                        calcAzimuth.bindValue(":S12", si1);
+                        calcAzimuth.bindValue(":S22", si2);
+                        calcAzimuth.bindValue(":S13", si1);
+                        calcAzimuth.bindValue(":S23", si2);
+
+                        if (! calcAzimuth.exec()) {
+                            pLogger->ERREUR(QString("Récupération de l'azimuth et de la distance : %1").arg(calcAzimuth.lastError().text()));
+                            return false;
+                        }
+
+                        QSqlQueryModel resAzDist;
+                        resAzDist.setQuery(calcAzimuth);
+                        double az = resAzDist.record(0).value("AZ").toDouble();
+                        double azinv = resAzDist.record(0).value("AZinv").toDouble();
+                        double dist = resAzDist.record(0).value("AZ").toDouble();
+
+                        double phi1 = getAngleFromAzimuths(az, azi1);
+                        double phi2 = getAngleFromAzimuths(azinv, azi2);
+
+                        double coef = (fabs(sin(phi1)) + fabs(sin(phi2)))*dist;
 
                         addAngle.bindValue(":IDP",p);
                         addAngle.bindValue(":IDA1",ida1);
                         addAngle.bindValue(":IDA2",ida2);
                         addAngle.bindValue(":ANGLE",angle);
-                        addAngle.bindValue(":S1", QVariant(si1));
-                        addAngle.bindValue(":S2", QVariant(si2));
-                        addAngle.bindValue(":S12", QVariant(si1));
-                        addAngle.bindValue(":S22", QVariant(si2));
+                        addAngle.bindValue(":COEF",coef);
 
                         if (! addAngle.exec()) {
                             pLogger->ERREUR(QString("Ajout de l'angle entre l'arc %1 et l'arc %2 : %3").arg(ida1).arg(ida2).arg(addAngle.lastError().text()));
@@ -298,18 +338,36 @@ bool Graphe::build_PANGLES(){
                     }
 
                     if (pf1 == pi2 && pf1 == p) {
-                        double angle = fabs(azf1 - azi2);
-                        if (angle > 180.) angle = 360.0 - angle;
-                        angle = fabs(angle - 180.);
+                        double angle = getAngleFromAzimuths(azf1, azi2);
+
+                        calcAzimuth.bindValue(":S11", sf1);
+                        calcAzimuth.bindValue(":S21", si2);
+                        calcAzimuth.bindValue(":S12", sf1);
+                        calcAzimuth.bindValue(":S22", si2);
+                        calcAzimuth.bindValue(":S13", sf1);
+                        calcAzimuth.bindValue(":S23", si2);
+
+                        if (! calcAzimuth.exec()) {
+                            pLogger->ERREUR(QString("Récupération de l'azimuth et de la distance : %1").arg(calcAzimuth.lastError().text()));
+                            return false;
+                        }
+
+                        QSqlQueryModel resAzDist;
+                        resAzDist.setQuery(calcAzimuth);
+                        double az = resAzDist.record(0).value("AZ").toDouble();
+                        double azinv = resAzDist.record(0).value("AZinv").toDouble();
+                        double dist = resAzDist.record(0).value("AZ").toDouble();
+
+                        double phi1 = getAngleFromAzimuths(az, azf1);
+                        double phi2 = getAngleFromAzimuths(azinv, azi2);
+
+                        double coef = (fabs(sin(phi1)) + fabs(sin(phi2)))*dist;
 
                         addAngle.bindValue(":IDP",p);
                         addAngle.bindValue(":IDA1",ida1);
                         addAngle.bindValue(":IDA2",ida2);
                         addAngle.bindValue(":ANGLE",angle);
-                        addAngle.bindValue(":S1", QVariant(sf1));
-                        addAngle.bindValue(":S2", QVariant(si2));
-                        addAngle.bindValue(":S12", QVariant(sf1));
-                        addAngle.bindValue(":S22", QVariant(si2));
+                        addAngle.bindValue(":COEF",coef);
 
                         if (! addAngle.exec()) {
                             pLogger->ERREUR(QString("Ajout de l'angle entre l'arc %1 et l'arc %2 : %3").arg(ida1).arg(ida2).arg(addAngle.lastError().text()));
@@ -318,18 +376,36 @@ bool Graphe::build_PANGLES(){
                     }
 
                     if (pi1 == pf2 && pi1 == p) {
-                        double angle = fabs(azi1 - azf2);
-                        if (angle > 180.) angle = 360.0 - angle;
-                        angle = fabs(angle - 180.);
+                        double angle = getAngleFromAzimuths(azi1, azf2);
+
+                        calcAzimuth.bindValue(":S11", si1);
+                        calcAzimuth.bindValue(":S21", sf2);
+                        calcAzimuth.bindValue(":S12", si1);
+                        calcAzimuth.bindValue(":S22", sf2);
+                        calcAzimuth.bindValue(":S13", si1);
+                        calcAzimuth.bindValue(":S23", sf2);
+
+                        if (! calcAzimuth.exec()) {
+                            pLogger->ERREUR(QString("Récupération de l'azimuth et de la distance : %1").arg(calcAzimuth.lastError().text()));
+                            return false;
+                        }
+
+                        QSqlQueryModel resAzDist;
+                        resAzDist.setQuery(calcAzimuth);
+                        double az = resAzDist.record(0).value("AZ").toDouble();
+                        double azinv = resAzDist.record(0).value("AZinv").toDouble();
+                        double dist = resAzDist.record(0).value("AZ").toDouble();
+
+                        double phi1 = getAngleFromAzimuths(az, azi1);
+                        double phi2 = getAngleFromAzimuths(azinv, azf2);
+
+                        double coef = (fabs(sin(phi1)) + fabs(sin(phi2)))*dist;
 
                         addAngle.bindValue(":IDP",p);
                         addAngle.bindValue(":IDA1",ida1);
                         addAngle.bindValue(":IDA2",ida2);
                         addAngle.bindValue(":ANGLE",angle);
-                        addAngle.bindValue(":S1", QVariant(si1));
-                        addAngle.bindValue(":S2", QVariant(sf2));
-                        addAngle.bindValue(":S12", QVariant(si1));
-                        addAngle.bindValue(":S22", QVariant(sf2));
+                        addAngle.bindValue(":COEF",coef);
 
                         if (! addAngle.exec()) {
                             pLogger->ERREUR(QString("Ajout de l'angle entre l'arc %1 et l'arc %2 : %3").arg(ida1).arg(ida2).arg(addAngle.lastError().text()));
@@ -338,18 +414,36 @@ bool Graphe::build_PANGLES(){
                     }
 
                     if (pf1 == pf2 && pf1 == p) {
-                        double angle = fabs(azf1 - azf2);
-                        if (angle > 180.) angle = 360.0 - angle;
-                        angle = fabs(angle - 180.);
+                        double angle = getAngleFromAzimuths(azf1, azf2);
+
+                        calcAzimuth.bindValue(":S11", sf1);
+                        calcAzimuth.bindValue(":S21", sf2);
+                        calcAzimuth.bindValue(":S12", sf1);
+                        calcAzimuth.bindValue(":S22", sf2);
+                        calcAzimuth.bindValue(":S13", sf1);
+                        calcAzimuth.bindValue(":S23", sf2);
+
+                        if (! calcAzimuth.exec()) {
+                            pLogger->ERREUR(QString("Récupération de l'azimuth et de la distance : %1").arg(calcAzimuth.lastError().text()));
+                            return false;
+                        }
+
+                        QSqlQueryModel resAzDist;
+                        resAzDist.setQuery(calcAzimuth);
+                        double az = resAzDist.record(0).value("AZ").toDouble();
+                        double azinv = resAzDist.record(0).value("AZinv").toDouble();
+                        double dist = resAzDist.record(0).value("AZ").toDouble();
+
+                        double phi1 = getAngleFromAzimuths(az, azf1);
+                        double phi2 = getAngleFromAzimuths(azinv, azf2);
+
+                        double coef = (fabs(sin(phi1)) + fabs(sin(phi2)))*dist;
 
                         addAngle.bindValue(":IDP",p);
                         addAngle.bindValue(":IDA1",ida1);
                         addAngle.bindValue(":IDA2",ida2);
                         addAngle.bindValue(":ANGLE",angle);
-                        addAngle.bindValue(":S1", QVariant(sf1));
-                        addAngle.bindValue(":S2", QVariant(sf2));
-                        addAngle.bindValue(":S12", QVariant(sf1));
-                        addAngle.bindValue(":S22", QVariant(sf2));
+                        addAngle.bindValue(":COEF",coef);
 
                         if (! addAngle.exec()) {
                             pLogger->ERREUR(QString("Ajout de l'angle entre l'arc %1 et l'arc %2 : %3").arg(ida1).arg(ida2).arg(addAngle.lastError().text()));
