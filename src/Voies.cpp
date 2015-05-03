@@ -257,7 +257,9 @@ bool Voies::buildVectors(){
             return false;
         }
 
-        voieS.push_back(ids_courant);
+        if (! voieS.contains(ids_courant)) {
+            voieS.push_back(ids_courant);
+        }
         m_PlaceVoies[ids_courant].push_back(idv);
 
         while (ida_courant) {
@@ -284,7 +286,9 @@ bool Voies::buildVectors(){
                 return false;
             }
 
-            voieS.push_back(ids_courant);
+            if (! voieS.contains(ids_courant)) {
+                voieS.push_back(ids_courant);
+            }
             m_PlaceVoies[ids_courant].push_back(idv);
 
         }
@@ -310,7 +314,9 @@ bool Voies::buildVectors(){
         int ida_precedent = m_Couples.at(ida_courant).at(1);
         int ids_courant = m_Couples.at(ida_courant).at(0);
 
-        voieS.push_back(ids_courant);
+        if (! voieS.contains(ids_courant)) {
+            voieS.push_back(ids_courant);
+        }
         m_PlaceVoies[ids_courant].push_back(idv);
 
         while (ida_courant) {
@@ -337,7 +343,9 @@ bool Voies::buildVectors(){
                 return false;
             }
 
-            voieS.push_back(ids_courant);
+            if (! voieS.contains(ids_courant)) {
+                voieS.push_back(ids_courant);
+            }
 
             m_PlaceVoies[ids_courant].push_back(idv);
 
@@ -518,14 +526,16 @@ bool Voies::build_PVOIES(){
             int nba = m_VoieArcs.at(idv).size();
             int nbp = m_VoiePlaces.at(idv).size();
 
+
             // CALCUL DU NOMBRE DE CONNEXION DE LA VOIE
             int nbc = 0;
             int nbc_p = 0;
 
             // Pour chaque sommet appartenant a la voie, on regarde combien d'arcs lui sont connectes
             // On enleve les 2 arcs correspondant a la voie sur laquelle on se trouve
-            for(int s = 0;  s < m_VoiePlaces[idv].size(); s++){
-                nbc += m_Graphe->getArcsOfPlace(m_VoiePlaces[idv][s])->size()-2;
+
+            for(int p = 0;  p < m_VoiePlaces[idv].size(); p++){
+                nbc += m_Graphe->getArcsOfPlace(m_VoiePlaces[idv][p])->size()-2;
             }//end for
 
             // Dans le cas d'une non boucle, on a enleve a tord 2 arcs pour les fins de voies
@@ -959,311 +969,112 @@ bool Voies::calcStructuralite(){
 }//END calcStructuralite
 
 
-bool Voies::calcConnexion(){
 
-    if (! pDatabase->columnExists("PVOIES", "NBCSIN") || ! pDatabase->columnExists("PVOIES", "NBCSIN_P")) {
-        pLogger->INFO("---------------------- calcConnexion START ----------------------");
+bool Voies::calcOrthoVoies(){
 
-        // AJOUT DE L'ATTRIBUT DE CONNEXION == ORTHOGONALITE
-        QSqlQueryModel addNbcsinInPVOIES;
-        addNbcsinInPVOIES.setQuery("ALTER TABLE PVOIES ADD NBCSIN float, ADD NBCSIN_P float;");
+    if (! pDatabase->columnExists("PVOIES", "ORTHO")) {
+        pLogger->INFO("---------------------- calcOrthoVoies START ----------------------");
+        cout<<"---------------------- calcOrthoVoies START ----------------------"<<endl;
 
-        if (addNbcsinInPVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter l'attribut nbcsin dans PVOIES : %1").arg(addNbcsinInPVOIES.lastError().text()));
+        // AJOUT DE L'ATTRIBUT D'ORTHOGONALITE
+        QSqlQueryModel addOrthoInVOIES;
+        addOrthoInVOIES.setQuery("ALTER TABLE PVOIES ADD ORTHO float;");
+
+        if (addOrthoInVOIES.lastError().isValid()) {
+            pLogger->ERREUR(QString("Impossible d'ajouter l'attribut ortho dans PVOIES : %1").arg(addOrthoInVOIES.lastError().text()));
             return false;
         }
+
+
 
         //pour chaque voie
         for(int idv = 1; idv <= m_nbVoies ; idv++){
 
-            int nba = m_VoieArcs.at(idv).size();
-            int nbp = m_VoiePlaces.at(idv).size();
-            float nbc_sin = 0;
-            float nbc_sin_p = 0;
+            float ortho = 0;
 
-            //pondération de nbc par le SINUS de l'angle
-            for (int i=0; i<m_VoieArcs[idv].size()-1; i++){
+            //pour chaque sommet de la voie
+            for(int sommet=0; sommet < m_VoiePlaces.at(idv).size(); sommet++){
+                //on récupère les arcs liés au sommet
+                int ids = m_VoiePlaces.at(idv).at(sommet);
+                QVector<long>* arcsOfSommet = m_Graphe->getArcsOfPlace(ids);
 
-                int a1 = m_VoieArcs[idv][i];
-                int a2 = m_VoieArcs[idv][i+1];
-                int sommet = m_VoiePlaces[idv][i+1];
+                QVector<long> arcsInVoie;
+                QVector<long> arcsOutVoie;
 
-                QVector<long> * arcs = m_Graphe->getArcsOfPlace(sommet);
+                //on cherche le ou les arcs sur la voie
+                for(int i=0; i < arcsOfSommet->size(); i++) {
+                    int arc = arcsOfSommet->at(i);
 
-                for(int j=0; j<arcs->size(); j++){
-
-                    int a3 = arcs->at(j);
-
-                    if(a3 == a1 || a3 == a2){
-                        continue;
-                    }
-
-                    double ang1 = m_Graphe->getAngle(sommet, a1, a3);
-                    double ang2 = m_Graphe->getAngle(sommet, a2, a3);
-                    double ang;
-
-                    if (ang1 < 0 || ang2 < 0){
-                        return false;
-                    }
-
-                    if (ang1 < ang2) ang = ang1;
-                    else ang = ang2;
-
-                    //entre 0 et 180, le sinus est positif
-                    float sin_ang = sin(ang);
-
-                    if (sin_ang < 0){
-                        pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (sin_ang = %1)").arg(sin_ang));
-                        return false;
-                    }
-
-                    //on ajoute les sinus
-                    nbc_sin += sin_ang;
-
-                }
-
-            }//end for
-
-
-            //ETUDE DES SINUS EN FIN DE VOIE
-            if (nba + 1 == nbp){ //on est PAS dans le cas d'une boucle
-
-                float min_ang;
-                float sin_angsmin;
-
-
-                //POUR LE PREMIER SOMMET
-                int a1 = m_VoieArcs[idv][0];
-                int sommet = m_VoiePlaces[idv][0];
-
-                QVector<long> * arcs = m_Graphe->getArcsOfPlace(sommet);
-
-                min_ang = arcs->at(0);
-                sin_angsmin = 0;
-
-                for(int j=0; j<arcs->size(); j++){
-
-                    int a3 = arcs->at(j);
-
-                    if(a3 == a1){
-                        continue;
-                    }
-
-                    double ang1 = m_Graphe->getAngle(sommet, a1, a3);
-
-                    if (ang1 < 0){
-                        return false;
-                    }
-
-                    //entre 0 et 180, le sinus est positif
-                    float sin_ang = sin(ang1);
-
-                    if (sin_ang < 0){
-                        pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (sin_ang = %1)").arg(sin_ang));
-                        return false;
-                    }
-
-                    //on ajoute les sinus
-                    nbc_sin += sin_ang;
-
-                    if (ang1 < min_ang){
-                        min_ang = ang1;
-                        sin_angsmin = sin_ang;
+                    if (m_VoieArcs.at(idv).contains(arc)) {
+                        arcsInVoie.push_back(arc);
+                    } else {
+                        arcsOutVoie.push_back(arc);
                     }
                 }
 
-                //ON RETIRE L'ARTEFACT D'ALIGNEMENT
-                nbc_sin_p -= sin_angsmin;
-
-
-                //POUR LE DERNIER SOMMET
-                a1 = m_VoieArcs[idv].last();
-                sommet = m_VoiePlaces[idv].last();
-
-                arcs = m_Graphe->getArcsOfPlace(sommet);
-
-                min_ang = arcs->at(0);
-                sin_angsmin = 0;
-
-                for(int j=0; j<arcs->size(); j++){
-
-                    int a3 = arcs->at(j);
-
-                    if(a3 == a1){
-                        continue;
-                    }
-
-
-                    double ang1 = m_Graphe->getAngle(sommet, a1, a3);
-
-                    if (ang1 < 0){
-                        return false;
-                    }
-
-                    //entre 0 et 180, le sinus est positif
-                    float sin_ang = sin(ang1);
-
-                    if (sin_ang < 0){
-                        pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (sin_ang = %1)").arg(sin_ang));
-                        return false;
-                    }
-
-                    //on ajoute les sinus
-                    nbc_sin += sin_ang;
-
-                    if (ang1 < min_ang){
-                        min_ang = ang1;
-                        sin_angsmin = sin_ang;
-                    }
+                if (arcsOutVoie.size() == 0) {
+                    continue;
                 }
 
-                //ON RETIRE L'ARTEFACT D'ALIGNEMENT
-                nbc_sin_p -= sin_angsmin;
+                QString ida1InOr = QString("ida1 = %1").arg(arcsInVoie.at(0));
+                QString ida2InOr = QString("ida2 = %1").arg(arcsInVoie.at(0));
 
-
-            }//end if (nba + 1 == nbs)
-            else{ //On est dans le cas d'une boucle
-
-                int a1 = m_VoieArcs[idv][0];
-                int a2 = m_VoieArcs[idv].last();
-                int sommet = m_VoiePlaces[idv][0];
-
-                QVector<long> * arcs = m_Graphe->getArcsOfPlace(sommet);
-
-                for(int j=0; j<arcs->size(); j++){
-
-                    int a3 = arcs->at(j);
-
-                    if(a3 == a1 || a3 == a2){
-                        continue;
-                    }
-
-                    double ang1 = m_Graphe->getAngle(sommet, a1, a3);
-                    double ang2 = m_Graphe->getAngle(sommet, a2, a3);
-                    double ang;
-
-                    if (ang1 < 0 || ang2 < 0){
-                        return false;
-                    }
-
-                    if (ang1 < ang2) ang = ang1;
-                    else ang = ang2;
-
-                    //entre 0 et 180, le sinus est positif
-                    float sin_ang = sin(ang);
-
-                    if (sin_ang < 0){
-                        pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (sin_ang = %1)").arg(sin_ang));
-                        return false;
-                    }
-
-                    //on ajoute les sinus
-                    nbc_sin += sin_ang;
-
+                for(int i = 1; i < arcsInVoie.size(); i++) {
+                    ida1InOr.append(QString(" OR ida1 = %1").arg(arcsInVoie.at(i)));
+                    ida2InOr.append(QString(" OR ida2 = %1").arg(arcsInVoie.at(i)));
                 }
 
 
-            }//end else (nba + 1 == nbs)
+                for(int i=0; i < arcsOutVoie.size(); i++) {
+                    int arc = arcsOutVoie.at(i);
+                    QString req = QString("SELECT max(angle) AS maxdev FROM pangles WHERE idp = %1 AND ( (ida1 = %2 AND (%3) ) OR (ida2 = %2 AND (%4) ) );").arg(ids).arg(arc).arg(ida2InOr).arg(ida1InOr);
 
-            nbc_sin_p += nbc_sin;
+                    QSqlQueryModel reqAngleMax;
+                    reqAngleMax.setQuery(req);
 
-            if (nbc_sin_p < 0){
-                pLogger->ERREUR(QString("Ce n'est pas normal que le sinus soit négatif ! (nbc_sin_p = %1)").arg(nbc_sin_p));
-                return false;
-            }
+                    if (reqAngleMax.lastError().isValid()) {
+                        pLogger->ERREUR(QString("Impossible de récupérer angle max : %1").arg(reqAngleMax.lastError().text()));
+                        return false;
+                    }
 
-            //pLogger->ATTENTION(QString("nbc_sin_p : %1").arg(nbc_sin_p));
-            //pLogger->ATTENTION(QString("idv : %1").arg(idv));
-            //pLogger->ATTENTION(QString("nbc_sin : %1").arg(nbc_sin));
+                    float maxAngle = reqAngleMax.record(0).value("maxdev").toFloat();
+                    ortho += sin(PI - maxAngle);
+                }
+
+            }//end for sommet
+
+
 
             //INSERTION EN BASE
 
-            QString addNbcsin = QString("UPDATE PVOIES SET NBCSIN = %1, NBCSIN_P = %2 WHERE idv = %3 ;").arg(nbc_sin).arg(nbc_sin_p).arg(idv);
+            QString addOrtho = QString("UPDATE PVOIES SET ORTHO = %1/nbc WHERE idv = %2 ;").arg(ortho).arg(idv);
 
-            QSqlQuery addNbcsinAttInVOIES;
-            addNbcsinAttInVOIES.prepare(addNbcsin);
+            QSqlQuery addOrthoInVOIES;
+            addOrthoInVOIES.prepare(addOrtho);
 
-            if (! addNbcsinAttInVOIES.exec()) {
-                pLogger->ERREUR(QString("Impossible d'ajouter la voie %1 dans la table PVOIES : %2").arg(idv).arg(addNbcsinAttInVOIES.lastError().text()));
+            if (! addOrthoInVOIES.exec()) {
+                pLogger->ERREUR(QString("Impossible d'ajouter l'orthogonalite %1 dans la table PVOIES : %2, erreur : %3").arg(ortho).arg(idv).arg(addOrthoInVOIES.lastError().text()));
                 return false;
             }
 
         }//end for idv
 
 
-        if (! pDatabase->add_att_div("PVOIES", "CONNECT", "NBCSIN", "NBC")) return false;
-        if (! pDatabase->add_att_div("PVOIES", "CONNECT_P", "NBCSIN_P", "NBC_P")) return false;
 
-        if (! pDatabase->add_att_cl("PVOIES", "CL_NBCSIN", "NBCSIN", 10, true)) return false;
-        if (! pDatabase->add_att_cl("PVOIES", "CL_CONNECT", "CONNECT", 10, true)) return false;
-        if (! pDatabase->add_att_cl("PVOIES", "CL_CONNECTP", "CONNECT_P", 10, true)) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_ORTHO", "ORTHO", 10, true)) return false;
 
-        //CLASSICATION EN 6 CLASSES
-        // 0 - 0.6
-        // 0.6 - 0.8
-        // 0.8 - 0.9
-        // 0.9 - 0.95
-        // 0.95 - 0.98
-        // 0.98 - max
-
-        // AJOUT DE L'ATTRIBUT DE CLASSIF
-        QSqlQueryModel addorthoInVOIES;
-        addorthoInVOIES.setQuery("ALTER TABLE PVOIES ADD C_ORTHO integer;");
-
-        if (addorthoInVOIES.lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible d'ajouter l'attribut c_ortho dans PVOIES : %1").arg(addorthoInVOIES.lastError().text()));
-            return false;
-        }
-
-        QSqlQueryModel *connectpFromVOIES = new QSqlQueryModel();
-
-        connectpFromVOIES->setQuery("SELECT IDV, CONNECT_P FROM PVOIES;");
-
-        if (connectpFromVOIES->lastError().isValid()) {
-            pLogger->ERREUR(QString("Impossible de recuperer les connect_p dans PVOIES : %1").arg(connectpFromVOIES->lastError().text()));
-            return false;
-        }//end if : test requete QSqlQueryModel
-
-        //CREATION DU TABLEAU DONNANT L'ORTHOGONALITE DE CHAQUE PVOIES
-        float connectp_voie[m_nbVoies + 1];
-        for(int v = 0; v < m_nbVoies; v++){
-
-            int idv = connectpFromVOIES->record(v).value("IDV").toInt();
-            connectp_voie[idv] = connectpFromVOIES->record(v).value("CONNECT_P").toFloat();
-
-            int c_connectp;
-
-            if (connectp_voie[idv] < 0.6){c_connectp = 0;}
-            else  if (connectp_voie[idv] < 0.8){c_connectp = 1;}
-            else  if (connectp_voie[idv] < 0.9){c_connectp = 2;}
-            else  if (connectp_voie[idv] < 0.95){c_connectp = 3;}
-            else  if (connectp_voie[idv] < 0.98){c_connectp = 4;}
-            else {c_connectp = 5;}
-
-            //INSERTION EN BASE
-
-            QString addOrtho = QString("UPDATE PVOIES SET C_ORTHO = %1 WHERE idv = %2 ;").arg(c_connectp).arg(idv);
-
-            QSqlQuery addOrthoAttInVOIES;
-            addOrthoAttInVOIES.prepare(addOrtho);
-
-            if (! addOrthoAttInVOIES.exec()) {
-                pLogger->ERREUR(QString("Impossible d'ajouter pour la voie %1 , l'orhtogonalité : %2").arg(idv).arg(addOrthoAttInVOIES.lastError().text()));
-                return false;
-            }
-
-        }//end for v
-
+        if (! pDatabase->add_att_div("PVOIES","ROO","RTOPO","ORTHO")) return false;
+        if (! pDatabase->add_att_cl("PVOIES", "CL_ROO", "ROO", 10, true)) return false;
 
 
 
     } else {
-        pLogger->INFO("---------------- Connect attributes already in PVOIES -----------------");
+        pLogger->INFO("---------------- Ortho attributes already in VOIES -----------------");
     }
 
     return true;
 
-}//END calcConnexion
+}//END calcOrthoVoies
 
 bool Voies::calcUse(){
 
@@ -2353,25 +2164,13 @@ bool Voies::do_Att_Voie(bool connexion, bool use, bool inclusion, bool gradient,
     }
 
 
-    //calcul des angles de connexions (orthogonalité)
-    if (connexion && ! calcConnexion()) {
-        if (! pDatabase->dropColumn("PVOIES", "NBCSIN")) {
-            pLogger->ERREUR("calcConnexion en erreur, ROLLBACK (drop column NBCSIN) echoue");
+    if( ! calcOrthoVoies()){
+        if (! pDatabase->dropColumn("VOIES", "ORTHO")) {
+            pLogger->ERREUR("calcOrthoVoies en erreur, ROLLBACK (drop column ORTHO) echoue");
         } else {
-            pLogger->INFO("calcConnexion en erreur, ROLLBACK (drop column NBCSIN) reussi");
-        }
-        if (! pDatabase->dropColumn("PVOIES", "NBCSIN_P")) {
-            pLogger->ERREUR("calcConnexion en erreur, ROLLBACK (drop column NBCSIN_P) echoue");
-        } else {
-            pLogger->INFO("calcConnexion en erreur, ROLLBACK (drop column NBCSIN_P) reussi");
-        }
-        if (! pDatabase->dropColumn("PVOIES", "C_ORTHO")) {
-            pLogger->ERREUR("calcConnexion en erreur, ROLLBACK (drop column C_ORTHO) echoue");
-        } else {
-            pLogger->INFO("calcConnexion en erreur, ROLLBACK (drop column C_ORTHO) reussi");
+            pLogger->INFO("calcOrthoVoies en erreur, ROLLBACK (drop column ORTHO) reussi");
         }
         return false;
-
     }
 
     //calcul des utilisation (betweenness)

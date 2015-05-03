@@ -222,7 +222,7 @@ bool Graphe::build_PANGLES(){
 
 
         QSqlQuery addAngle;
-        addAngle.prepare("INSERT INTO PANGLES(IDP, IDA1, IDA2, ANGLE, PHI1, PHI2, DIST, USED) VALUES (:IDP, :IDA1, :IDA2, :ANGLE, :PHI1, :PHI2, :DIST, FALSE);");
+        addAngle.prepare("INSERT INTO PANGLES(IDP, IDA1, IDA2, ANGLE, COEF, USED) VALUES (:IDP, :IDA1, :IDA2, :ANGLE, :COEF, FALSE);");
 
         QSqlQuery calcAzimuth;
         calcAzimuth.prepare("SELECT ST_azimuth(:S11::geometry, :S21::geometry) AS AZ, ST_azimuth(:S22::geometry, :S12::geometry) AS AZinv, ST_distance(:S13,:S23) AS DIST;");
